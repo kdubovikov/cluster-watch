@@ -24,8 +24,22 @@ struct MenuBarRootView: View {
 
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         VStack(alignment: .leading, spacing: 12) {
-                            WatchedJobsSectionView(store: store, now: context.date)
-                            BrowseJobsSectionView(store: store, now: context.date)
+                            WatchedJobsSectionView(
+                                store: store,
+                                now: context.date,
+                                openLogTailWindow: {
+                                    NSApp.activate(ignoringOtherApps: true)
+                                    openWindow(id: "log-tail")
+                                }
+                            )
+                            BrowseJobsSectionView(
+                                store: store,
+                                now: context.date,
+                                openLogTailWindow: {
+                                    NSApp.activate(ignoringOtherApps: true)
+                                    openWindow(id: "log-tail")
+                                }
+                            )
                         }
                     }
                 }

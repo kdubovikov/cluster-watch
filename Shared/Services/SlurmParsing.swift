@@ -3,6 +3,7 @@ import Foundation
 public enum SlurmParsing {
     public static let squeueFormat = "%i|%u|%T|%j|%V|%S|%M|%E|%r"
     public static let sacctFormat = "JobIDRaw,User,State,JobName,Submit,Start,End,Elapsed,Reason"
+    public static let sacctLogFormat = "JobIDRaw,StdOut,StdErr,WorkDir"
 
     public static func parseCurrentJobs(output: String, clusterID: ClusterID) -> [CurrentJob] {
         output
@@ -22,6 +23,29 @@ public enum SlurmParsing {
 
         let requestedBase = baseJobID(for: requestedJobID)
         return rows.first(where: { baseJobID(for: $0.jobID) == requestedBase })?.snapshot
+    }
+
+    public static func parseHistoricalLogPaths(output: String, requestedJobID: String) -> JobLogPaths? {
+        let rows = output
+            .split(whereSeparator: \.isNewline)
+            .compactMap { parseHistoricalLogRow(String($0)) }
+            .filter { !$0.jobID.contains(".") }
+
+        if let exact = rows.first(where: { $0.jobID == requestedJobID }) {
+            return exact.logPaths
+        }
+
+        let requestedBase = baseJobID(for: requestedJobID)
+        return rows.first(where: { baseJobID(for: $0.jobID) == requestedBase })?.logPaths
+    }
+
+    public static func parseScontrolLogPaths(output: String) -> JobLogPaths? {
+        let stdoutPath = fieldValue("StdOut", in: output)
+        let stderrPath = fieldValue("StdErr", in: output)
+        let workDirectory = fieldValue("WorkDir", in: output)
+
+        let logPaths = JobLogPaths(stdoutPath: stdoutPath, stderrPath: stderrPath, workDirectory: workDirectory)
+        return logPaths.hasAnyPath || logPaths.workDirectory != nil ? logPaths : nil
     }
 
     private static func parseCurrentJobRow(_ row: String, clusterID: ClusterID) -> CurrentJob? {
@@ -73,6 +97,18 @@ public enum SlurmParsing {
         )
     }
 
+    private static func parseHistoricalLogRow(_ row: String) -> HistoricalLogRow? {
+        let parts = splitColumns(row, expectedCount: 4)
+        guard parts.count == 4 else { return nil }
+
+        return HistoricalLogRow(
+            jobID: parts[0],
+            stdoutPath: parts[1],
+            stderrPath: parts[2],
+            workDirectory: parts[3]
+        )
+    }
+
     private static func splitColumns(_ row: String, expectedCount: Int) -> [String] {
         row
             .split(separator: "|", omittingEmptySubsequences: false)
@@ -83,6 +119,27 @@ public enum SlurmParsing {
 
     private static func baseJobID(for jobID: String) -> String {
         jobID.split(separator: ".").first.map(String.init) ?? jobID
+    }
+
+    private static func fieldValue(_ field: String, in output: String) -> String? {
+        let pattern = "(?:^|\\s)\(NSRegularExpression.escapedPattern(for: field))=(\\S+)"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return nil
+        }
+
+        let range = NSRange(output.startIndex..<output.endIndex, in: output)
+        guard let match = regex.firstMatch(in: output, range: range),
+              match.numberOfRanges > 1,
+              let valueRange = Range(match.range(at: 1), in: output) else {
+            return nil
+        }
+
+        let value = String(output[valueRange]).trimmedOrEmpty
+        let lowercased = value.lowercased()
+        guard !value.isEmpty, lowercased != "(null)", lowercased != "none", lowercased != "n/a" else {
+            return nil
+        }
+        return value
     }
 
     private struct HistoricalRow {
@@ -113,6 +170,21 @@ public enum SlurmParsing {
                     pendingReason: pendingReason,
                     dependencyExpression: nil
                 )
+            )
+        }
+    }
+
+    private struct HistoricalLogRow {
+        var jobID: String
+        var stdoutPath: String
+        var stderrPath: String
+        var workDirectory: String
+
+        var logPaths: JobLogPaths {
+            JobLogPaths(
+                stdoutPath: stdoutPath,
+                stderrPath: stderrPath,
+                workDirectory: workDirectory
             )
         }
     }

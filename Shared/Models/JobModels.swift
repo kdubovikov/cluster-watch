@@ -124,6 +124,80 @@ public enum JobIdentifier {
     }
 }
 
+public struct JobLogPaths: Codable, Hashable, Sendable {
+    public var stdoutPath: String?
+    public var stderrPath: String?
+    public var workDirectory: String?
+
+    public init(stdoutPath: String? = nil, stderrPath: String? = nil, workDirectory: String? = nil) {
+        self.stdoutPath = stdoutPath?.trimmedOrEmpty.nilIfEmpty
+        self.stderrPath = stderrPath?.trimmedOrEmpty.nilIfEmpty
+        self.workDirectory = workDirectory?.trimmedOrEmpty.nilIfEmpty
+    }
+
+    public var hasAnyPath: Bool {
+        stdoutPath != nil || stderrPath != nil
+    }
+}
+
+public enum JobLogStream: String, Codable, CaseIterable, Hashable, Identifiable, Sendable {
+    case stdout
+    case stderr
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .stdout:
+            return "Stdout"
+        case .stderr:
+            return "Stderr"
+        }
+    }
+}
+
+public struct JobLogTailSession: Hashable, Identifiable, Sendable {
+    public var clusterID: ClusterID
+    public var clusterName: String
+    public var jobID: String
+    public var jobName: String
+    public var paths: JobLogPaths
+    public var preferredStream: JobLogStream
+
+    public init(
+        clusterID: ClusterID,
+        clusterName: String,
+        jobID: String,
+        jobName: String,
+        paths: JobLogPaths,
+        preferredStream: JobLogStream
+    ) {
+        self.clusterID = clusterID
+        self.clusterName = clusterName
+        self.jobID = jobID
+        self.jobName = jobName
+        self.paths = paths
+        self.preferredStream = preferredStream
+    }
+
+    public var id: String {
+        "\(clusterID.rawValue):\(jobID):\(preferredStream.rawValue)"
+    }
+
+    public func path(for stream: JobLogStream) -> String? {
+        switch stream {
+        case .stdout:
+            return paths.stdoutPath
+        case .stderr:
+            return paths.stderrPath
+        }
+    }
+
+    public var availableStreams: [JobLogStream] {
+        JobLogStream.allCases.filter { path(for: $0) != nil }
+    }
+}
+
 public struct JobSnapshot: Codable, Hashable, Sendable {
     public var jobID: String
     public var owner: String

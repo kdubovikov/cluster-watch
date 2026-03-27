@@ -49,4 +49,35 @@ final class SlurmParsingTests: XCTestCase {
 
         XCTAssertEqual(SlurmDependencyParser.parseJobIDs(from: expression), ["12345", "12346", "22300"])
     }
+
+    func testParseScontrolLogPathsExtractsExpandedStdoutAndStderr() {
+        let output = """
+        JobId=148463 JobName=tb_gsm8k_t10
+           UserId=kirill.dubovikov(1001) GroupId=kirill(1001) MCS_label=N/A
+           WorkDir=/home/kirill.dubovikov/projects/gflownet-sampler
+           StdErr=/home/kirill.dubovikov/projects/gflownet-sampler/logs/tb_gsm8k_t10-148463.err
+           StdIn=/dev/null
+           StdOut=/home/kirill.dubovikov/projects/gflownet-sampler/logs/tb_gsm8k_t10-148463.out
+        """
+
+        let logPaths = SlurmParsing.parseScontrolLogPaths(output: output)
+
+        XCTAssertEqual(logPaths?.stdoutPath, "/home/kirill.dubovikov/projects/gflownet-sampler/logs/tb_gsm8k_t10-148463.out")
+        XCTAssertEqual(logPaths?.stderrPath, "/home/kirill.dubovikov/projects/gflownet-sampler/logs/tb_gsm8k_t10-148463.err")
+        XCTAssertEqual(logPaths?.workDirectory, "/home/kirill.dubovikov/projects/gflownet-sampler")
+    }
+
+    func testParseHistoricalLogPathsPrefersPrimaryRow() {
+        let output = """
+        148463|/logs/%x-%j.out|/logs/%x-%j.err|/workdir
+        148463.batch|||
+        148463.extern|||
+        """
+
+        let logPaths = SlurmParsing.parseHistoricalLogPaths(output: output, requestedJobID: "148463")
+
+        XCTAssertEqual(logPaths?.stdoutPath, "/logs/%x-%j.out")
+        XCTAssertEqual(logPaths?.stderrPath, "/logs/%x-%j.err")
+        XCTAssertEqual(logPaths?.workDirectory, "/workdir")
+    }
 }

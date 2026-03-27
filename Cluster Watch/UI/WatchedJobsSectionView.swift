@@ -3,6 +3,7 @@ import SwiftUI
 struct WatchedJobsSectionView: View {
     let store: JobStore
     let now: Date
+    let openLogTailWindow: () -> Void
 
     var body: some View {
         PanelSection(title: "Watched Jobs", systemImage: "eye") {
@@ -28,7 +29,8 @@ struct WatchedJobsSectionView: View {
                                         DependencyLinkedJobGroupView(
                                             group: group,
                                             store: store,
-                                            now: now
+                                            now: now,
+                                            openLogTailWindow: openLogTailWindow
                                         )
                                     } else if let job = group.jobs.first {
                                         WatchedJobRowView(
@@ -36,11 +38,22 @@ struct WatchedJobsSectionView: View {
                                             clusterName: store.clusterName(for: job.clusterID),
                                             upstreamJobs: store.watchedDependencies(for: job),
                                             downstreamJobs: store.watchedDependents(for: job),
+                                            hasDetectedLogPaths: job.state != .pending && store.logPaths(for: job)?.hasAnyPath == true,
                                             now: now,
+                                            tailAction: {
+                                                Task {
+                                                    if await store.prepareLogTail(for: job) {
+                                                        openLogTailWindow()
+                                                    }
+                                                }
+                                            },
                                             unwatchAction: {
                                                 store.unwatch(job: job)
                                             }
                                         )
+                                        .task(id: "\(job.id):\(job.state.rawValue)") {
+                                            await store.prefetchLogPaths(for: job)
+                                        }
                                     }
                                 }
                             }
@@ -59,6 +72,7 @@ private struct DependencyLinkedJobGroupView: View {
     let group: GroupedJobsViewModel.Group
     let store: JobStore
     let now: Date
+    let openLogTailWindow: () -> Void
 
     var body: some View {
         let coordinateSpaceName = "dependency-group-\(group.id)"
@@ -70,12 +84,25 @@ private struct DependencyLinkedJobGroupView: View {
                     clusterName: store.clusterName(for: row.job.clusterID),
                     upstreamJobs: store.watchedDependencies(for: row.job),
                     downstreamJobs: store.watchedDependents(for: row.job),
+                    hasDetectedLogPaths: row.job.state != .pending && store.logPaths(for: row.job)?.hasAnyPath == true,
                     now: now,
                     displayStyle: .chain(depth: row.depth),
+                    showsPrimaryAction: false,
+                    reservedTrailingInset: 22,
+                    tailAction: {
+                        Task {
+                            if await store.prepareLogTail(for: row.job) {
+                                openLogTailWindow()
+                            }
+                        }
+                    },
                     unwatchAction: {
                         store.unwatch(job: row.job)
                     }
                 )
+                .task(id: "\(row.id):\(row.job.state.rawValue)") {
+                    await store.prefetchLogPaths(for: row.job)
+                }
                 .background {
                     GeometryReader { proxy in
                         Color.clear.preference(
@@ -100,6 +127,19 @@ private struct DependencyLinkedJobGroupView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.cyan.opacity(0.05))
         )
+        .overlay(alignment: .topTrailing) {
+            Button {
+                store.unwatch(jobs: group.jobs)
+            } label: {
+                Image(systemName: "minus.circle")
+                    .accessibilityLabel("Unwatch Group")
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .padding(.top, 10)
+            .padding(.trailing, 14)
+            .help("Unwatch whole group")
+        }
         .overlayPreferenceValue(DependencyRowFramePreferenceKey.self) { rows in
             DependencyChainOverlay(rows: rows)
         }

@@ -28,8 +28,12 @@ struct WatchedJobRowView: View {
     let clusterName: String
     let upstreamJobs: [WatchedJob]
     let downstreamJobs: [WatchedJob]
+    let hasDetectedLogPaths: Bool
     let now: Date
     var displayStyle: DisplayStyle = .standalone
+    var showsPrimaryAction: Bool = true
+    var reservedTrailingInset: CGFloat = 0
+    let tailAction: () -> Void
     let unwatchAction: () -> Void
 
     var body: some View {
@@ -96,23 +100,41 @@ struct WatchedJobRowView: View {
 
                 Spacer()
 
-                Button {
-                    unwatchAction()
-                } label: {
-                    if displayStyle.isChain {
-                        Image(systemName: "minus.circle")
-                            .accessibilityLabel("Unwatch")
-                    } else {
-                        Label("Unwatch", systemImage: "minus.circle")
+                if hasDetectedLogPaths {
+                    Button {
+                        tailAction()
+                    } label: {
+                        if displayStyle.isChain {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .accessibilityLabel("Tail log")
+                        } else {
+                            Label("Tail", systemImage: "doc.text.magnifyingglass")
+                        }
                     }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
                 }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
+
+                if showsPrimaryAction {
+                    Button {
+                        unwatchAction()
+                    } label: {
+                        if displayStyle.isChain {
+                            Image(systemName: "minus.circle")
+                                .accessibilityLabel("Unwatch")
+                        } else {
+                            Label("Unwatch", systemImage: "minus.circle")
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                }
             }
         }
         .padding(.leading, leadingInset)
         .padding(.vertical, displayStyle.isChain ? 9 : 10)
-        .padding(.horizontal, displayStyle.isChain ? 6 : 10)
+        .padding(.leading, displayStyle.isChain ? 6 : 10)
+        .padding(.trailing, trailingInset)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(backgroundShape)
     }
@@ -123,24 +145,9 @@ struct WatchedJobRowView: View {
 
     private var primaryDetailLine: String? {
         if displayStyle.isChain {
-            if let dependencyReference = JobFormatting.dependencyReferenceText(
-                dependencyExpression: job.dependencyExpression,
-                dependencyJobIDs: job.dependencyJobIDs,
-                upstreamJobs: upstreamJobs
-            ) {
-                switch job.dependencyStatus {
-                case .waiting:
-                    return "Depends on \(dependencyReference)"
-                case .neverSatisfied:
-                    return "Broken dependency: \(dependencyReference)"
-                case .satisfied where job.state == .pending:
-                    return "Dependencies resolved: \(dependencyReference)"
-                case .none, .satisfied:
-                    break
-                }
-            }
-
-            return JobFormatting.pendingReasonSummary(job.pendingReason, dependencyStatus: job.dependencyStatus)
+            return job.dependencyStatus == .none
+                ? JobFormatting.pendingReasonSummary(job.pendingReason, dependencyStatus: job.dependencyStatus)
+                : nil
         }
 
         if let dependencySummary = JobFormatting.dependencySummary(
@@ -168,6 +175,10 @@ struct WatchedJobRowView: View {
     private var leadingInset: CGFloat {
         guard displayStyle.isChain else { return 0 }
         return 30 + CGFloat(displayStyle.depth) * 18
+    }
+
+    private var trailingInset: CGFloat {
+        (displayStyle.isChain ? 6 : 10) + reservedTrailingInset
     }
 
     @ViewBuilder

@@ -3,6 +3,7 @@ import SwiftUI
 struct BrowseJobsSectionView: View {
     @Bindable var store: JobStore
     let now: Date
+    let openLogTailWindow: () -> Void
 
     var body: some View {
         let visibleJobs = store.visibleCurrentJobs
@@ -31,7 +32,8 @@ struct BrowseJobsSectionView: View {
                                     group: group,
                                     store: store,
                                     allVisibleJobs: visibleJobs,
-                                    now: now
+                                    now: now,
+                                    openLogTailWindow: openLogTailWindow
                                 )
                             } else if let job = group.jobs.first {
                                 BrowseJobRowView(
@@ -39,11 +41,22 @@ struct BrowseJobsSectionView: View {
                                     clusterName: store.clusterName(for: job.clusterID),
                                     upstreamJobs: dependencies(for: job, within: visibleJobs),
                                     downstreamJobs: dependents(for: job, within: visibleJobs),
+                                    hasDetectedLogPaths: job.state != .pending && store.logPaths(for: job)?.hasAnyPath == true,
                                     now: now,
+                                    tailAction: {
+                                        Task {
+                                            if await store.prepareLogTail(for: job) {
+                                                openLogTailWindow()
+                                            }
+                                        }
+                                    },
                                     watchAction: {
                                         store.watch(job: job)
                                     }
                                 )
+                                .task(id: job.id) {
+                                    await store.prefetchLogPaths(for: job)
+                                }
                             }
                         }
 
@@ -96,6 +109,7 @@ private struct CurrentDependencyLinkedJobGroupView: View {
     let store: JobStore
     let allVisibleJobs: [CurrentJob]
     let now: Date
+    let openLogTailWindow: () -> Void
 
     var body: some View {
         let coordinateSpaceName = "current-dependency-group-\(group.id)"
@@ -107,12 +121,25 @@ private struct CurrentDependencyLinkedJobGroupView: View {
                     clusterName: store.clusterName(for: row.job.clusterID),
                     upstreamJobs: upstreamJobs(for: row.job),
                     downstreamJobs: downstreamJobs(for: row.job),
+                    hasDetectedLogPaths: row.job.state != .pending && store.logPaths(for: row.job)?.hasAnyPath == true,
                     now: now,
                     displayStyle: .chain(depth: row.depth),
+                    showsPrimaryAction: false,
+                    reservedTrailingInset: 22,
+                    tailAction: {
+                        Task {
+                            if await store.prepareLogTail(for: row.job) {
+                                openLogTailWindow()
+                            }
+                        }
+                    },
                     watchAction: {
                         store.watch(job: row.job)
                     }
                 )
+                .task(id: row.id) {
+                    await store.prefetchLogPaths(for: row.job)
+                }
                 .background {
                     GeometryReader { proxy in
                         Color.clear.preference(
@@ -137,6 +164,19 @@ private struct CurrentDependencyLinkedJobGroupView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.cyan.opacity(0.05))
         )
+        .overlay(alignment: .topTrailing) {
+            Button {
+                store.watch(jobs: group.jobs)
+            } label: {
+                Image(systemName: "plus.circle")
+                    .accessibilityLabel("Watch Group")
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .padding(.top, 10)
+            .padding(.trailing, 14)
+            .help("Watch whole group")
+        }
         .overlayPreferenceValue(CurrentDependencyRowFramePreferenceKey.self) { rows in
             CurrentDependencyChainOverlay(rows: rows)
         }
@@ -275,8 +315,12 @@ private struct BrowseJobRowView: View {
     let clusterName: String
     let upstreamJobs: [CurrentJob]
     let downstreamJobs: [CurrentJob]
+    let hasDetectedLogPaths: Bool
     let now: Date
     var displayStyle: DisplayStyle = .standalone
+    var showsPrimaryAction: Bool = true
+    var reservedTrailingInset: CGFloat = 0
+    let tailAction: () -> Void
     let watchAction: () -> Void
 
     var body: some View {
@@ -321,31 +365,17 @@ private struct BrowseJobRowView: View {
         }
         .padding(.leading, leadingInset)
         .padding(.vertical, displayStyle.isChain ? 9 : 8)
-        .padding(.horizontal, displayStyle.isChain ? 6 : 8)
+        .padding(.leading, displayStyle.isChain ? 6 : 8)
+        .padding(.trailing, trailingInset)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(backgroundShape)
     }
 
     private var primaryDetailLine: String? {
         if displayStyle.isChain {
-            if let dependencyReference = JobFormatting.dependencyReferenceText(
-                dependencyExpression: job.dependencyExpression,
-                dependencyJobIDs: job.dependencyJobIDs,
-                upstreamJobs: upstreamJobs
-            ) {
-                switch job.dependencyStatus {
-                case .waiting:
-                    return "Depends on \(dependencyReference)"
-                case .neverSatisfied:
-                    return "Broken dependency: \(dependencyReference)"
-                case .satisfied where job.state == .pending:
-                    return "Dependencies resolved: \(dependencyReference)"
-                case .none, .satisfied:
-                    break
-                }
-            }
-
-            return JobFormatting.pendingReasonSummary(job.pendingReason, dependencyStatus: job.dependencyStatus)
+            return job.dependencyStatus == .none
+                ? JobFormatting.pendingReasonSummary(job.pendingReason, dependencyStatus: job.dependencyStatus)
+                : nil
         }
 
         if let dependencySummary = JobFormatting.dependencySummary(
@@ -371,25 +401,58 @@ private struct BrowseJobRowView: View {
         return 30 + CGFloat(displayStyle.depth) * 18
     }
 
+    private var trailingInset: CGFloat {
+        (displayStyle.isChain ? 6 : 8) + reservedTrailingInset
+    }
+
     @ViewBuilder
     private var actionButton: some View {
         if displayStyle.isChain {
-            Button {
-                watchAction()
-            } label: {
-                Image(systemName: "plus.circle")
-                    .accessibilityLabel("Watch")
+            HStack(spacing: 8) {
+                if hasDetectedLogPaths {
+                    Button {
+                        tailAction()
+                    } label: {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .accessibilityLabel("Tail log")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                }
+
+                if showsPrimaryAction {
+                    Button {
+                        watchAction()
+                    } label: {
+                        Image(systemName: "plus.circle")
+                            .accessibilityLabel("Watch")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                }
             }
-            .buttonStyle(.borderless)
-            .controlSize(.small)
         } else {
-            Button {
-                watchAction()
-            } label: {
-                Label("Watch", systemImage: "plus.circle")
+            HStack(spacing: 8) {
+                if hasDetectedLogPaths {
+                    Button {
+                        tailAction()
+                    } label: {
+                        Label("Tail", systemImage: "doc.text.magnifyingglass")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
+                if showsPrimaryAction {
+                    Button {
+                        watchAction()
+                    } label: {
+                        Label("Watch", systemImage: "plus.circle")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
         }
     }
 

@@ -9,9 +9,11 @@ public final class JobStore {
     public var pollIntervalSeconds: Double
     public var watchedJobs: [WatchedJob]
     public var browseSearchText: String = ""
+    public var activeLogTail: JobLogTailSession?
 
     public private(set) var currentJobsByCluster: [ClusterID: [CurrentJob]]
     public private(set) var reachabilityByCluster: [ClusterID: ClusterReachabilityState]
+    public private(set) var logPathsByJobKey: [String: JobLogPaths] = [:]
 
     @ObservationIgnored private let persistence: any PersistenceStoring
     @ObservationIgnored private let slurmClient: any SlurmClientProtocol
@@ -21,6 +23,7 @@ public final class JobStore {
     @ObservationIgnored private var started = false
     @ObservationIgnored private var bootstrapped = false
     @ObservationIgnored private var refreshingClusterIDs: Set<ClusterID> = []
+    @ObservationIgnored private var fetchingLogPathJobKeys: Set<String> = []
 
     public init(
         persistence: any PersistenceStoring,
@@ -157,8 +160,32 @@ public final class JobStore {
         persistAsync()
     }
 
+    public func watch(jobs: [CurrentJob]) {
+        let now = nowProvider()
+
+        for job in jobs.reversed() {
+            if let index = watchedJobs.firstIndex(where: { $0.clusterID == job.clusterID && $0.jobID == job.jobID }) {
+                let originalNotificationState = watchedJobs[index].notificationSent
+                let originalFirstSeenAt = watchedJobs[index].firstSeenAt
+                watchedJobs[index].apply(snapshot: job.snapshot, refreshedAt: now)
+                watchedJobs[index].notificationSent = originalNotificationState
+                watchedJobs[index].firstSeenAt = originalFirstSeenAt
+            } else {
+                watchedJobs.insert(WatchedJob(currentJob: job, now: now), at: 0)
+            }
+        }
+
+        persistAsync()
+    }
+
     public func unwatch(job: WatchedJob) {
         watchedJobs.removeAll { $0.id == job.id }
+        persistAsync()
+    }
+
+    public func unwatch(jobs: [WatchedJob]) {
+        let jobIDs = Set(jobs.map(\.id))
+        watchedJobs.removeAll { jobIDs.contains($0.id) }
         persistAsync()
     }
 
@@ -169,6 +196,81 @@ public final class JobStore {
 
     public func isWatched(_ currentJob: CurrentJob) -> Bool {
         watchedJobs.contains { $0.clusterID == currentJob.clusterID && $0.jobID == currentJob.jobID }
+    }
+
+    public func logPaths(for job: CurrentJob) -> JobLogPaths? {
+        logPathsByJobKey[jobKey(clusterID: job.clusterID, jobID: job.jobID)]
+    }
+
+    public func logPaths(for job: WatchedJob) -> JobLogPaths? {
+        logPathsByJobKey[jobKey(clusterID: job.clusterID, jobID: job.jobID)]
+    }
+
+    public func prefetchLogPaths(for job: CurrentJob) async {
+        guard job.state != .pending else { return }
+        await prefetchLogPaths(clusterID: job.clusterID, jobID: job.jobID)
+    }
+
+    public func prefetchLogPaths(for job: WatchedJob) async {
+        guard job.state != .pending else { return }
+        await prefetchLogPaths(clusterID: job.clusterID, jobID: job.jobID)
+    }
+
+    public func prepareLogTail(for job: CurrentJob) async -> Bool {
+        guard job.state != .pending else { return false }
+        await prefetchLogPaths(for: job)
+        guard let paths = logPaths(for: job),
+              let preferredStream = preferredLogStream(for: paths) else {
+            return false
+        }
+
+        activeLogTail = JobLogTailSession(
+            clusterID: job.clusterID,
+            clusterName: clusterName(for: job.clusterID),
+            jobID: job.jobID,
+            jobName: job.jobName,
+            paths: paths,
+            preferredStream: preferredStream
+        )
+        return true
+    }
+
+    public func prepareLogTail(for job: WatchedJob) async -> Bool {
+        guard job.state != .pending else { return false }
+        await prefetchLogPaths(for: job)
+        guard let paths = logPaths(for: job),
+              let preferredStream = preferredLogStream(for: paths) else {
+            return false
+        }
+
+        activeLogTail = JobLogTailSession(
+            clusterID: job.clusterID,
+            clusterName: clusterName(for: job.clusterID),
+            jobID: job.jobID,
+            jobName: job.jobName,
+            paths: paths,
+            preferredStream: preferredStream
+        )
+        return true
+    }
+
+    public func closeActiveLogTail() {
+        activeLogTail = nil
+    }
+
+    public func tailLog(
+        session: JobLogTailSession,
+        stream: JobLogStream,
+        lineCount: Int = 200
+    ) async throws -> String {
+        guard let cluster = clusters.first(where: { $0.id == session.clusterID }) else {
+            throw SlurmClientError.invalidConfiguration("Cluster configuration not found.")
+        }
+        guard let path = session.path(for: stream) else {
+            throw SlurmClientError.invalidConfiguration("No \(stream.title.lowercased()) path available.")
+        }
+
+        return try await slurmClient.tailLog(for: cluster, remotePath: path, lineCount: lineCount)
     }
 
     public func clusterName(for clusterID: ClusterID) -> String {
@@ -278,6 +380,25 @@ public final class JobStore {
         reachabilityByCluster[clusterID] ?? ClusterReachabilityState()
     }
 
+    private func prefetchLogPaths(clusterID: ClusterID, jobID: String) async {
+        let key = jobKey(clusterID: clusterID, jobID: jobID)
+        guard logPathsByJobKey[key] == nil else { return }
+        guard !fetchingLogPathJobKeys.contains(key) else { return }
+        guard let cluster = clusters.first(where: { $0.id == clusterID }), cluster.isEnabled else { return }
+
+        fetchingLogPathJobKeys.insert(key)
+        defer { fetchingLogPathJobKeys.remove(key) }
+
+        do {
+            if let logPaths = try await slurmClient.fetchLogPaths(for: cluster, jobID: jobID),
+               logPaths.hasAnyPath {
+                logPathsByJobKey[key] = logPaths
+            }
+        } catch {
+            return
+        }
+    }
+
     private func configurePolling() {
         pollingCoordinator.start(
             intervalProvider: { [weak self] in
@@ -352,6 +473,16 @@ public final class JobStore {
             guard existingJob.clusterID == clusterID else { return existingJob }
             return updatedJobsByID[existingJob.id] ?? existingJob
         }
+    }
+
+    private func preferredLogStream(for logPaths: JobLogPaths) -> JobLogStream? {
+        if logPaths.stdoutPath != nil { return .stdout }
+        if logPaths.stderrPath != nil { return .stderr }
+        return nil
+    }
+
+    private func jobKey(clusterID: ClusterID, jobID: String) -> String {
+        "\(clusterID.rawValue):\(jobID)"
     }
 
     private func persistAsync() {

@@ -367,6 +367,57 @@ final class JobStoreTests: XCTestCase {
         XCTAssertEqual(store.watchedDependents(for: dependencyJob).map(\.jobID), ["22300"])
     }
 
+    func testPrepareLogTailCreatesSessionForDetectedStdoutPath() async {
+        let watchedJob = WatchedJob(
+            clusterID: csccID,
+            jobID: "148463",
+            jobName: "tb_gsm8k_t10",
+            owner: "kirill.dubovikov",
+            state: .running,
+            rawState: "RUNNING",
+            submitTime: Date(timeIntervalSince1970: 100),
+            startTime: Date(timeIntervalSince1970: 120),
+            endTime: nil,
+            elapsedSeconds: 30,
+            firstSeenAt: Date(timeIntervalSince1970: 100),
+            lastUpdatedAt: Date(timeIntervalSince1970: 120),
+            lastSuccessfulRefreshAt: Date(timeIntervalSince1970: 120),
+            isStale: false
+        )
+
+        let store = JobStore(
+            persistence: InMemoryPersistenceStore(),
+            slurmClient: MockSlurmClient(
+                currentResults: [:],
+                historicalResults: [:],
+                logPathResults: [
+                    "cscc:148463": .success(
+                        JobLogPaths(
+                            stdoutPath: "/logs/tb_gsm8k_t10-148463.out",
+                            stderrPath: "/logs/tb_gsm8k_t10-148463.err"
+                        )
+                    )
+                ]
+            ),
+            notificationManager: MockNotificationManager(),
+            nowProvider: { Date(timeIntervalSince1970: 500) },
+            initialState: PersistedAppState(
+                clusters: sampleClusters(),
+                globalUsernameFilter: "kirill.dubovikov",
+                pollIntervalSeconds: 30,
+                watchedJobs: [watchedJob],
+                reachabilityByCluster: [:]
+            )
+        )
+
+        let opened = await store.prepareLogTail(for: watchedJob)
+
+        XCTAssertTrue(opened)
+        XCTAssertEqual(store.activeLogTail?.jobID, "148463")
+        XCTAssertEqual(store.activeLogTail?.preferredStream, .stdout)
+        XCTAssertEqual(store.activeLogTail?.paths.stderrPath, "/logs/tb_gsm8k_t10-148463.err")
+    }
+
     private func sampleClusters() -> [ClusterConfig] {
         [
             ClusterConfig(id: camdID, displayName: "CAMD", sshAlias: "camd1"),
@@ -394,17 +445,23 @@ private actor InMemoryPersistenceStore: PersistenceStoring {
 private actor MockSlurmClient: SlurmClientProtocol {
     private let currentResults: [ClusterID: Result<[CurrentJob], Error>]
     private let historicalResults: [String: Result<JobSnapshot?, Error>]
+    private let logPathResults: [String: Result<JobLogPaths?, Error>]
+    private let tailResults: [String: Result<String, Error>]
     private let currentDelaysNanoseconds: [ClusterID: UInt64]
     private let historicalDelaysNanoseconds: [String: UInt64]
 
     init(
         currentResults: [ClusterID: Result<[CurrentJob], Error>],
         historicalResults: [String: Result<JobSnapshot?, Error>],
+        logPathResults: [String: Result<JobLogPaths?, Error>] = [:],
+        tailResults: [String: Result<String, Error>] = [:],
         currentDelaysNanoseconds: [ClusterID: UInt64] = [:],
         historicalDelaysNanoseconds: [String: UInt64] = [:]
     ) {
         self.currentResults = currentResults
         self.historicalResults = historicalResults
+        self.logPathResults = logPathResults
+        self.tailResults = tailResults
         self.currentDelaysNanoseconds = currentDelaysNanoseconds
         self.historicalDelaysNanoseconds = historicalDelaysNanoseconds
     }
@@ -428,6 +485,20 @@ private actor MockSlurmClient: SlurmClientProtocol {
             return try result.get()
         }
         return nil
+    }
+
+    func fetchLogPaths(for cluster: ClusterConfig, jobID: String) async throws -> JobLogPaths? {
+        if let result = logPathResults["\(cluster.id.rawValue):\(jobID)"] {
+            return try result.get()
+        }
+        return nil
+    }
+
+    func tailLog(for cluster: ClusterConfig, remotePath: String, lineCount: Int) async throws -> String {
+        if let result = tailResults["\(cluster.id.rawValue):\(remotePath)"] {
+            return try result.get()
+        }
+        return ""
     }
 }
 

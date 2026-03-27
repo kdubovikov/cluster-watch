@@ -18,6 +18,10 @@ Cluster Watch is a native macOS menu bar app for monitoring Slurm jobs across an
   - Earlier This Week
   - Last Week
   - Older
+- Dependency-aware chain rendering in both watched and unwatched sections:
+  - dependent jobs are grouped visually into a shared tree
+  - grouped chains can be watched or unwatched as a whole
+  - chain rows avoid repeating redundant dependency text
 - Split job timing into:
   - waiting time from submit to start
   - running time from start to end or now
@@ -25,6 +29,12 @@ Cluster Watch is a native macOS menu bar app for monitoring Slurm jobs across an
   - jobs waiting on other jobs
   - watched jobs that unblock downstream jobs
   - unsatisfied dependency failures such as `DependencyNeverSatisfied`
+- Compact cluster status indicators in the header
+- Searchable `Browse Unwatched Jobs` section that excludes already watched jobs
+- One-click remote log tail window for jobs with detected Slurm-managed stdout/stderr paths
+  - log paths are detected lazily
+  - logs are tailed over SSH from the remote cluster
+  - `Tail` is only shown for non-pending jobs with detected log files
 - One-shot local notifications for terminal transitions
 - Persistent local state for watched jobs, cluster settings, and reachability snapshots
 
@@ -70,10 +80,12 @@ Cluster Watch is a native macOS menu bar app for monitoring Slurm jobs across an
 
 1. Open the menu bar app.
 2. Review watched jobs at the top of the window.
-3. Browse current jobs in the lower search area.
-4. Click `Watch` next to any visible job.
-5. Leave watched jobs pinned after completion, or remove them manually with:
-   - `Unwatch` on a single row
+3. Browse current unwatched jobs in the lower search area.
+4. Click `Watch` on a standalone row or use the group action on a dependency chain to watch the whole chain.
+5. For running or finished jobs with detected Slurm log paths, click `Tail` to open the remote log tail window.
+6. Leave watched jobs pinned after completion, or remove them manually with:
+   - `Unwatch` on a single standalone row
+   - group unwatch on a dependency-linked watched chain
    - `Clear Completed` for all watched jobs in terminal states
 
 ## Slurm Command Assumptions
@@ -100,6 +112,21 @@ The parser prefers the primary row matching the raw/base job ID and ignores step
 - `%r` in `squeue` for the pending reason
 - `Reason` in `sacct` for historical dependency-related failures such as `DependencyNeverSatisfied`
 
+Log path detection and tailing use Slurm metadata when available:
+
+```sh
+ssh mycluster "scontrol show job <jobid>"
+ssh mycluster "sacct -n -P --expand-patterns -j <jobid> --format=JobIDRaw,StdOut,StdErr,WorkDir"
+```
+
+When a log path is available, the app tails the remote file with SSH using a command equivalent to:
+
+```sh
+ssh mycluster "tail -n 200 -- <remote-log-path>"
+```
+
+This means the log tail window reads the file on the remote cluster. If Slurm reports a future stdout/stderr path for a pending job but the file has not been created yet, the app does not expose `Tail` until the job is no longer pending.
+
 ## Persistence And Outages
 
 - State is saved to:
@@ -118,4 +145,10 @@ The parser prefers the primary row matching the raw/base job ID and ignores step
 swift build
 ```
 
-- Full app builds and Xcode test execution were not run in this environment because the active developer directory is Command Line Tools, not a full Xcode install.
+- The manual app bundle can be rebuilt and launched locally with:
+
+```sh
+./Tools/build_manual_app.sh
+```
+
+- `swift test` may still require a full Xcode developer directory with the Xcode license accepted.

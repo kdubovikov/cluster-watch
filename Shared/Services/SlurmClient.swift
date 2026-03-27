@@ -3,6 +3,8 @@ import Foundation
 public protocol SlurmClientProtocol: Sendable {
     func fetchCurrentJobs(for cluster: ClusterConfig, username: String) async throws -> [CurrentJob]
     func fetchHistoricalJob(for cluster: ClusterConfig, jobID: String) async throws -> JobSnapshot?
+    func fetchLogPaths(for cluster: ClusterConfig, jobID: String) async throws -> JobLogPaths?
+    func tailLog(for cluster: ClusterConfig, remotePath: String, lineCount: Int) async throws -> String
 }
 
 public enum SlurmClientError: LocalizedError, Equatable {
@@ -59,6 +61,48 @@ public actor SlurmClient: SlurmClientProtocol {
         let output = try await runSSH(destination: cluster.effectiveSSHDestination, remoteCommand: remoteCommand)
         let snapshot = SlurmParsing.parseHistoricalJob(output: output, clusterID: cluster.id, requestedJobID: jobID)
         return Self.applyingTimestampOffset(inferredTimestampOffsetByCluster[cluster.id], to: snapshot)
+    }
+
+    public func fetchLogPaths(for cluster: ClusterConfig, jobID: String) async throws -> JobLogPaths? {
+        guard !cluster.effectiveSSHDestination.isEmpty else {
+            throw SlurmClientError.invalidConfiguration("Missing SSH alias for \(cluster.displayName).")
+        }
+
+        do {
+            let scontrolOutput = try await runSSH(
+                destination: cluster.effectiveSSHDestination,
+                remoteCommand: "scontrol show job \(shellEscape(jobID))"
+            )
+            if let logPaths = SlurmParsing.parseScontrolLogPaths(output: scontrolOutput),
+               logPaths.hasAnyPath {
+                return logPaths
+            }
+        } catch {
+            // Fall through to accounting data for completed or purged jobs.
+        }
+
+        let sacctOutput = try await runSSH(
+            destination: cluster.effectiveSSHDestination,
+            remoteCommand: "sacct -n -P --expand-patterns -j \(shellEscape(jobID)) --format=\(SlurmParsing.sacctLogFormat)"
+        )
+        if let logPaths = SlurmParsing.parseHistoricalLogPaths(output: sacctOutput, requestedJobID: jobID),
+           logPaths.hasAnyPath {
+            return logPaths
+        }
+
+        return nil
+    }
+
+    public func tailLog(for cluster: ClusterConfig, remotePath: String, lineCount: Int) async throws -> String {
+        guard !cluster.effectiveSSHDestination.isEmpty else {
+            throw SlurmClientError.invalidConfiguration("Missing SSH alias for \(cluster.displayName).")
+        }
+
+        let safeLineCount = max(1, lineCount)
+        return try await runSSH(
+            destination: cluster.effectiveSSHDestination,
+            remoteCommand: "LC_ALL=C tail -n \(safeLineCount) -- \(shellEscape(remotePath))"
+        )
     }
 
     private func runSSH(destination: String, remoteCommand: String) async throws -> String {
