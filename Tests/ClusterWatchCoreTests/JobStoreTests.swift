@@ -4,15 +4,15 @@ import XCTest
 
 @MainActor
 final class JobStoreTests: XCTestCase {
-    private let camdID = ClusterID(rawValue: "camd")
-    private let csccID = ClusterID(rawValue: "cscc")
+    private let alphaClusterID = ClusterID(rawValue: "cluster-alpha")
+    private let betaClusterID = ClusterID(rawValue: "cluster-beta")
 
     func testUnreachableClusterKeepsWatchedJobAndMarksItStale() async {
         let watchedJob = WatchedJob(
-            clusterID: camdID,
+            clusterID: alphaClusterID,
             jobID: "12345",
             jobName: "train-model",
-            owner: "kirill",
+            owner: "test-user",
             state: .running,
             rawState: "RUNNING",
             submitTime: Date(timeIntervalSince1970: 100),
@@ -28,7 +28,7 @@ final class JobStoreTests: XCTestCase {
         let persistence = InMemoryPersistenceStore()
         let notifications = MockNotificationManager()
         let client = MockSlurmClient(
-            currentResults: [camdID: .failure(SlurmClientError.commandFailed("Host unreachable"))],
+            currentResults: [alphaClusterID: .failure(SlurmClientError.commandFailed("Host unreachable"))],
             historicalResults: [:]
         )
 
@@ -39,27 +39,27 @@ final class JobStoreTests: XCTestCase {
             nowProvider: { Date(timeIntervalSince1970: 300) },
             initialState: PersistedAppState(
                 clusters: sampleClusters(),
-                globalUsernameFilter: "kirill",
+                globalUsernameFilter: "test-user",
                 pollIntervalSeconds: 30,
                 watchedJobs: [watchedJob],
                 reachabilityByCluster: [:]
             )
         )
 
-        await store.refreshCluster(id: camdID)
+        await store.refreshCluster(id: alphaClusterID)
 
         XCTAssertEqual(store.watchedJobs.count, 1)
         XCTAssertTrue(store.watchedJobs[0].isStale)
         XCTAssertEqual(store.watchedJobs[0].state, .running)
-        XCTAssertEqual(store.reachability(for: camdID).status, .unreachable)
+        XCTAssertEqual(store.reachability(for: alphaClusterID).status, .unreachable)
     }
 
     func testTerminalTransitionSendsNotificationOnlyOnce() async {
         let initialJob = WatchedJob(
-            clusterID: camdID,
+            clusterID: alphaClusterID,
             jobID: "12345",
             jobName: "train-model",
-            owner: "kirill",
+            owner: "test-user",
             state: .running,
             rawState: "RUNNING",
             submitTime: Date(timeIntervalSince1970: 100),
@@ -76,7 +76,7 @@ final class JobStoreTests: XCTestCase {
         let notifications = MockNotificationManager()
         let historicalSnapshot = JobSnapshot(
             jobID: "12345",
-            owner: "kirill",
+            owner: "test-user",
             state: .completed,
             rawState: "COMPLETED",
             jobName: "train-model",
@@ -87,8 +87,8 @@ final class JobStoreTests: XCTestCase {
         )
 
         let client = MockSlurmClient(
-            currentResults: [camdID: .success([])],
-            historicalResults: ["camd:12345": .success(historicalSnapshot)]
+            currentResults: [alphaClusterID: .success([])],
+            historicalResults: ["cluster-alpha:12345": .success(historicalSnapshot)]
         )
 
         let store = JobStore(
@@ -98,15 +98,15 @@ final class JobStoreTests: XCTestCase {
             nowProvider: { Date(timeIntervalSince1970: 500) },
             initialState: PersistedAppState(
                 clusters: sampleClusters(),
-                globalUsernameFilter: "kirill",
+                globalUsernameFilter: "test-user",
                 pollIntervalSeconds: 30,
                 watchedJobs: [initialJob],
                 reachabilityByCluster: [:]
             )
         )
 
-        await store.refreshCluster(id: camdID)
-        await store.refreshCluster(id: camdID)
+        await store.refreshCluster(id: alphaClusterID)
+        await store.refreshCluster(id: alphaClusterID)
 
         XCTAssertEqual(store.watchedJobs[0].state, .completed)
         XCTAssertTrue(store.watchedJobs[0].notificationSent)
@@ -115,10 +115,10 @@ final class JobStoreTests: XCTestCase {
 
     func testTerminalWatchedJobDoesNotRegressToRunningIfCurrentQueryStillShowsIt() async {
         let completedJob = WatchedJob(
-            clusterID: camdID,
-            jobID: "38071",
-            jobName: "pes2o-filter-q35-7n-r5",
-            owner: "salem.lahlou",
+            clusterID: alphaClusterID,
+            jobID: "41001",
+            jobName: "prepare-data",
+            owner: "owner-a",
             state: .completed,
             rawState: "COMPLETED",
             notificationSent: true,
@@ -133,10 +133,10 @@ final class JobStoreTests: XCTestCase {
         )
 
         let lingeringCurrentJob = CurrentJob(
-            clusterID: camdID,
-            jobID: "38071",
-            jobName: "pes2o-filter-q35-7n-r5",
-            owner: "salem.lahlou",
+            clusterID: alphaClusterID,
+            jobID: "41001",
+            jobName: "prepare-data",
+            owner: "owner-a",
             state: .running,
             rawState: "COMPLETING",
             submitTime: Date(timeIntervalSince1970: 100),
@@ -147,21 +147,21 @@ final class JobStoreTests: XCTestCase {
         let store = JobStore(
             persistence: InMemoryPersistenceStore(),
             slurmClient: MockSlurmClient(
-                currentResults: [camdID: .success([lingeringCurrentJob])],
+                currentResults: [alphaClusterID: .success([lingeringCurrentJob])],
                 historicalResults: [:]
             ),
             notificationManager: MockNotificationManager(),
             nowProvider: { Date(timeIntervalSince1970: 260) },
             initialState: PersistedAppState(
                 clusters: sampleClusters(),
-                globalUsernameFilter: "salem.lahlou",
+                globalUsernameFilter: "owner-a",
                 pollIntervalSeconds: 30,
                 watchedJobs: [completedJob],
                 reachabilityByCluster: [:]
             )
         )
 
-        await store.refreshCluster(id: camdID)
+        await store.refreshCluster(id: alphaClusterID)
 
         XCTAssertEqual(store.watchedJobs[0].state, .completed)
         XCTAssertEqual(store.watchedJobs[0].rawState, "COMPLETED")
@@ -172,10 +172,10 @@ final class JobStoreTests: XCTestCase {
 
     func testMissingHistoricalRecordKeepsLastKnownStateButClearsStale() async {
         let initialJob = WatchedJob(
-            clusterID: csccID,
+            clusterID: betaClusterID,
             jobID: "999",
             jobName: "wait-job",
-            owner: "kirill",
+            owner: "test-user",
             state: .pending,
             rawState: "PENDING",
             submitTime: Date(timeIntervalSince1970: 100),
@@ -191,21 +191,21 @@ final class JobStoreTests: XCTestCase {
         let store = JobStore(
             persistence: InMemoryPersistenceStore(),
             slurmClient: MockSlurmClient(
-                currentResults: [csccID: .success([])],
-                historicalResults: ["cscc:999": .success(nil)]
+                currentResults: [betaClusterID: .success([])],
+                historicalResults: ["cluster-beta:999": .success(nil)]
             ),
             notificationManager: MockNotificationManager(),
             nowProvider: { Date(timeIntervalSince1970: 500) },
             initialState: PersistedAppState(
                 clusters: sampleClusters(),
-                globalUsernameFilter: "kirill",
+                globalUsernameFilter: "test-user",
                 pollIntervalSeconds: 30,
                 watchedJobs: [initialJob],
                 reachabilityByCluster: [:]
             )
         )
 
-        await store.refreshCluster(id: csccID)
+        await store.refreshCluster(id: betaClusterID)
 
         XCTAssertEqual(store.watchedJobs[0].state, .pending)
         XCTAssertFalse(store.watchedJobs[0].isStale)
@@ -213,11 +213,11 @@ final class JobStoreTests: XCTestCase {
     }
 
     func testConcurrentClusterRefreshesDoNotOverwriteOtherClusterUpdates() async {
-        let camdJob = WatchedJob(
-            clusterID: camdID,
-            jobID: "38071",
-            jobName: "pes2o-filter-q35-7n-r5",
-            owner: "salem.lahlou",
+        let alphaJob = WatchedJob(
+            clusterID: alphaClusterID,
+            jobID: "41001",
+            jobName: "prepare-data",
+            owner: "owner-a",
             state: .running,
             rawState: "RUNNING",
             submitTime: Date(timeIntervalSince1970: 100),
@@ -230,11 +230,11 @@ final class JobStoreTests: XCTestCase {
             isStale: false
         )
 
-        let csccJob = WatchedJob(
-            clusterID: csccID,
-            jobID: "148463",
-            jobName: "tb_gsm8k_t10",
-            owner: "kirill.dubovikov",
+        let betaJob = WatchedJob(
+            clusterID: betaClusterID,
+            jobID: "52001",
+            jobName: "train-model",
+            owner: "owner-b",
             state: .pending,
             rawState: "PENDING",
             submitTime: Date(timeIntervalSince1970: 100),
@@ -247,23 +247,23 @@ final class JobStoreTests: XCTestCase {
             isStale: false
         )
 
-        let camdHistorical = JobSnapshot(
-            jobID: "38071",
-            owner: "salem.lahlou",
+        let alphaHistorical = JobSnapshot(
+            jobID: "41001",
+            owner: "owner-a",
             state: .completed,
             rawState: "COMPLETED",
-            jobName: "pes2o-filter-q35-7n-r5",
+            jobName: "prepare-data",
             submitTime: Date(timeIntervalSince1970: 100),
             startTime: Date(timeIntervalSince1970: 100),
             endTime: Date(timeIntervalSince1970: 200),
             elapsedSeconds: 100
         )
 
-        let csccCurrent = CurrentJob(
-            clusterID: csccID,
-            jobID: "148463",
-            jobName: "tb_gsm8k_t10",
-            owner: "kirill.dubovikov",
+        let betaCurrent = CurrentJob(
+            clusterID: betaClusterID,
+            jobID: "52001",
+            jobName: "train-model",
+            owner: "owner-b",
             state: .running,
             rawState: "RUNNING",
             submitTime: Date(timeIntervalSince1970: 100),
@@ -275,47 +275,47 @@ final class JobStoreTests: XCTestCase {
             persistence: InMemoryPersistenceStore(),
             slurmClient: MockSlurmClient(
                 currentResults: [
-                    camdID: .success([]),
-                    csccID: .success([csccCurrent]),
+                    alphaClusterID: .success([]),
+                    betaClusterID: .success([betaCurrent]),
                 ],
                 historicalResults: [
-                    "camd:38071": .success(camdHistorical),
+                    "cluster-alpha:41001": .success(alphaHistorical),
                 ],
                 historicalDelaysNanoseconds: [
-                    "camd:38071": 150_000_000
+                    "cluster-alpha:41001": 150_000_000
                 ]
             ),
             notificationManager: MockNotificationManager(),
             nowProvider: { Date(timeIntervalSince1970: 250) },
             initialState: PersistedAppState(
                 clusters: sampleClusters(),
-                globalUsernameFilter: "kirill.dubovikov",
+                globalUsernameFilter: "owner-b",
                 pollIntervalSeconds: 30,
-                watchedJobs: [camdJob, csccJob],
+                watchedJobs: [alphaJob, betaJob],
                 reachabilityByCluster: [:]
             )
         )
 
-        async let camdRefresh: Void = store.refreshCluster(id: camdID)
-        async let csccRefresh: Void = store.refreshCluster(id: csccID)
-        _ = await (camdRefresh, csccRefresh)
+        async let alphaRefresh: Void = store.refreshCluster(id: alphaClusterID)
+        async let betaRefresh: Void = store.refreshCluster(id: betaClusterID)
+        _ = await (alphaRefresh, betaRefresh)
 
-        let refreshedCAMDJob = try XCTUnwrap(store.watchedJobs.first { $0.jobID == "38071" })
-        XCTAssertEqual(refreshedCAMDJob.state, .completed)
-        XCTAssertTrue(refreshedCAMDJob.notificationSent)
+        let refreshedAlphaJob = try XCTUnwrap(store.watchedJobs.first { $0.jobID == "41001" })
+        XCTAssertEqual(refreshedAlphaJob.state, .completed)
+        XCTAssertTrue(refreshedAlphaJob.notificationSent)
 
-        let refreshedCSCCJob = try XCTUnwrap(store.watchedJobs.first { $0.jobID == "148463" })
-        XCTAssertEqual(refreshedCSCCJob.state, .running)
-        XCTAssertEqual(refreshedCSCCJob.rawState, "RUNNING")
-        XCTAssertEqual(refreshedCSCCJob.startTime, Date(timeIntervalSince1970: 120))
+        let refreshedBetaJob = try XCTUnwrap(store.watchedJobs.first { $0.jobID == "52001" })
+        XCTAssertEqual(refreshedBetaJob.state, .running)
+        XCTAssertEqual(refreshedBetaJob.rawState, "RUNNING")
+        XCTAssertEqual(refreshedBetaJob.startTime, Date(timeIntervalSince1970: 120))
     }
 
     func testWatchedDependencyHelpersExposeUpstreamAndDownstreamJobs() async {
         let dependencyJob = WatchedJob(
-            clusterID: camdID,
+            clusterID: alphaClusterID,
             jobID: "12345",
-            jobName: "preprocess",
-            owner: "kirill",
+            jobName: "prepare-data",
+            owner: "test-user",
             state: .running,
             rawState: "RUNNING",
             submitTime: Date(timeIntervalSince1970: 100),
@@ -329,10 +329,10 @@ final class JobStoreTests: XCTestCase {
         )
 
         let dependentJob = WatchedJob(
-            clusterID: camdID,
+            clusterID: alphaClusterID,
             jobID: "22300",
             jobName: "train-model",
-            owner: "kirill",
+            owner: "test-user",
             state: .pending,
             rawState: "PENDING",
             submitTime: Date(timeIntervalSince1970: 160),
@@ -356,7 +356,7 @@ final class JobStoreTests: XCTestCase {
             nowProvider: { Date(timeIntervalSince1970: 500) },
             initialState: PersistedAppState(
                 clusters: sampleClusters(),
-                globalUsernameFilter: "kirill",
+                globalUsernameFilter: "test-user",
                 pollIntervalSeconds: 30,
                 watchedJobs: [dependencyJob, dependentJob],
                 reachabilityByCluster: [:]
@@ -369,10 +369,10 @@ final class JobStoreTests: XCTestCase {
 
     func testPrepareLogTailCreatesSessionForDetectedStdoutPath() async {
         let watchedJob = WatchedJob(
-            clusterID: csccID,
-            jobID: "148463",
-            jobName: "tb_gsm8k_t10",
-            owner: "kirill.dubovikov",
+            clusterID: betaClusterID,
+            jobID: "52001",
+            jobName: "train-model",
+            owner: "owner-b",
             state: .running,
             rawState: "RUNNING",
             submitTime: Date(timeIntervalSince1970: 100),
@@ -391,10 +391,10 @@ final class JobStoreTests: XCTestCase {
                 currentResults: [:],
                 historicalResults: [:],
                 logPathResults: [
-                    "cscc:148463": .success(
+                    "cluster-beta:52001": .success(
                         JobLogPaths(
-                            stdoutPath: "/logs/tb_gsm8k_t10-148463.out",
-                            stderrPath: "/logs/tb_gsm8k_t10-148463.err"
+                            stdoutPath: "/logs/train-model-52001.out",
+                            stderrPath: "/logs/train-model-52001.err"
                         )
                     )
                 ]
@@ -403,7 +403,7 @@ final class JobStoreTests: XCTestCase {
             nowProvider: { Date(timeIntervalSince1970: 500) },
             initialState: PersistedAppState(
                 clusters: sampleClusters(),
-                globalUsernameFilter: "kirill.dubovikov",
+                globalUsernameFilter: "owner-b",
                 pollIntervalSeconds: 30,
                 watchedJobs: [watchedJob],
                 reachabilityByCluster: [:]
@@ -413,15 +413,15 @@ final class JobStoreTests: XCTestCase {
         let opened = await store.prepareLogTail(for: watchedJob)
 
         XCTAssertTrue(opened)
-        XCTAssertEqual(store.activeLogTail?.jobID, "148463")
+        XCTAssertEqual(store.activeLogTail?.jobID, "52001")
         XCTAssertEqual(store.activeLogTail?.preferredStream, .stdout)
-        XCTAssertEqual(store.activeLogTail?.paths.stderrPath, "/logs/tb_gsm8k_t10-148463.err")
+        XCTAssertEqual(store.activeLogTail?.paths.stderrPath, "/logs/train-model-52001.err")
     }
 
     private func sampleClusters() -> [ClusterConfig] {
         [
-            ClusterConfig(id: camdID, displayName: "CAMD", sshAlias: "camd1"),
-            ClusterConfig(id: csccID, displayName: "CSCC", sshAlias: "cscc")
+            ClusterConfig(id: alphaClusterID, displayName: "Cluster Alpha", sshAlias: "alpha-login"),
+            ClusterConfig(id: betaClusterID, displayName: "Cluster Beta", sshAlias: "beta-login")
         ]
     }
 }

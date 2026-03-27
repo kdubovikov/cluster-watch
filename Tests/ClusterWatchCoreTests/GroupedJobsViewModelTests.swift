@@ -3,18 +3,18 @@ import XCTest
 @testable import ClusterWatchCore
 
 final class GroupedJobsViewModelTests: XCTestCase {
-    private let camdID = ClusterID(rawValue: "camd")
-    private let csccID = ClusterID(rawValue: "cscc")
+    private let alphaClusterID = ClusterID(rawValue: "cluster-alpha")
+    private let betaClusterID = ClusterID(rawValue: "cluster-beta")
 
     func testBucketsAndOrderingPreferRunningThenRecent() {
         let calendar = Calendar(identifier: .gregorian)
         let referenceDate = calendar.date(from: DateComponents(year: 2026, month: 3, day: 27, hour: 12, minute: 0))!
 
         let runningJob = WatchedJob(
-            clusterID: camdID,
+            clusterID: alphaClusterID,
             jobID: "300",
             jobName: "running",
-            owner: "kirill",
+            owner: "test-user",
             state: .running,
             rawState: "RUNNING",
             submitTime: calendar.date(byAdding: .hour, value: -4, to: referenceDate),
@@ -28,10 +28,10 @@ final class GroupedJobsViewModelTests: XCTestCase {
         )
 
         let completedJob = WatchedJob(
-            clusterID: camdID,
+            clusterID: alphaClusterID,
             jobID: "100",
             jobName: "completed",
-            owner: "kirill",
+            owner: "test-user",
             state: .completed,
             rawState: "COMPLETED",
             submitTime: calendar.date(byAdding: .day, value: -1, to: referenceDate),
@@ -45,10 +45,10 @@ final class GroupedJobsViewModelTests: XCTestCase {
         )
 
         let pendingJob = WatchedJob(
-            clusterID: csccID,
+            clusterID: betaClusterID,
             jobID: "200",
             jobName: "pending",
-            owner: "kirill",
+            owner: "test-user",
             state: .pending,
             rawState: "PENDING",
             submitTime: calendar.date(byAdding: .hour, value: -6, to: referenceDate),
@@ -75,10 +75,10 @@ final class GroupedJobsViewModelTests: XCTestCase {
 
     func testCurrentGroupsNestDependencyChainInBrowseOrder() {
         let root = CurrentJob(
-            clusterID: camdID,
-            jobID: "38071",
-            jobName: "pes2o-filter-q35-7n-r5",
-            owner: "salem.lahlou",
+            clusterID: alphaClusterID,
+            jobID: "41001",
+            jobName: "prepare-data",
+            owner: "owner-a",
             state: .running,
             rawState: "RUNNING",
             submitTime: Date(timeIntervalSince1970: 100),
@@ -87,38 +87,38 @@ final class GroupedJobsViewModelTests: XCTestCase {
         )
 
         let child = CurrentJob(
-            clusterID: camdID,
-            jobID: "38072",
-            jobName: "pes2o-hn-q35-7n-r4",
-            owner: "salem.lahlou",
+            clusterID: alphaClusterID,
+            jobID: "41002",
+            jobName: "train-model",
+            owner: "owner-a",
             state: .pending,
             rawState: "PENDING",
             submitTime: Date(timeIntervalSince1970: 100),
             pendingReason: "Dependency",
-            dependencyExpression: "afterok:38071(unfulfilled)",
-            dependencyJobIDs: ["38071"],
+            dependencyExpression: "afterok:41001(unfulfilled)",
+            dependencyJobIDs: ["41001"],
             dependencyIsActive: true
         )
 
         let grandchild = CurrentJob(
-            clusterID: camdID,
-            jobID: "38073",
-            jobName: "assemble-norag-all",
-            owner: "salem.lahlou",
+            clusterID: alphaClusterID,
+            jobID: "41003",
+            jobName: "assemble-results",
+            owner: "owner-a",
             state: .pending,
             rawState: "PENDING",
             submitTime: Date(timeIntervalSince1970: 100),
             pendingReason: "Dependency",
-            dependencyExpression: "afterok:38072(unfulfilled)",
-            dependencyJobIDs: ["38072"],
+            dependencyExpression: "afterok:41002(unfulfilled)",
+            dependencyJobIDs: ["41002"],
             dependencyIsActive: true
         )
 
         let standalone = CurrentJob(
-            clusterID: csccID,
-            jobID: "148463",
-            jobName: "tb_gsm8k_t10",
-            owner: "kirill.dubovikov",
+            clusterID: betaClusterID,
+            jobID: "52001",
+            jobName: "standalone-job",
+            owner: "owner-b",
             state: .running,
             rawState: "RUNNING",
             submitTime: Date(timeIntervalSince1970: 200),
@@ -131,8 +131,8 @@ final class GroupedJobsViewModelTests: XCTestCase {
         )
 
         XCTAssertEqual(groups.count, 2)
-        XCTAssertEqual(groups[0].rows.map(\.job.jobID), ["148463"])
-        XCTAssertEqual(groups[1].rows.map(\.job.jobID), ["38071", "38072", "38073"])
+        XCTAssertEqual(groups[0].rows.map(\.job.jobID), ["52001"])
+        XCTAssertEqual(groups[1].rows.map(\.job.jobID), ["41001", "41002", "41003"])
         XCTAssertEqual(groups[1].rows.map(\.depth), [0, 1, 2])
         XCTAssertEqual(groups[1].rows.map(\.parentJobID), [nil, root.id, child.id])
     }

@@ -2,15 +2,15 @@ import XCTest
 @testable import ClusterWatchCore
 
 final class SlurmParsingTests: XCTestCase {
-    private let camdID = ClusterID(rawValue: "camd")
+    private let alphaClusterID = ClusterID(rawValue: "cluster-alpha")
 
     func testParseCurrentJobsExtractsTimingFields() {
         let output = """
-        12345|kirill|RUNNING|train-model|2026-03-27T09:00:00|2026-03-27T09:10:00|01:25:00|NULL|None
-        12346|kirill|PENDING|preprocess|2026-03-27T10:00:00|N/A|00:15:00|afterok:12345|Dependency
+        12345|test-user|RUNNING|train-model|2026-03-27T09:00:00|2026-03-27T09:10:00|01:25:00|NULL|None
+        12346|test-user|PENDING|prepare-data|2026-03-27T10:00:00|N/A|00:15:00|afterok:12345|Dependency
         """
 
-        let jobs = SlurmParsing.parseCurrentJobs(output: output, clusterID: camdID)
+        let jobs = SlurmParsing.parseCurrentJobs(output: output, clusterID: alphaClusterID)
 
         XCTAssertEqual(jobs.count, 2)
         XCTAssertEqual(jobs[0].jobID, "12345")
@@ -25,12 +25,12 @@ final class SlurmParsingTests: XCTestCase {
 
     func testParseHistoricalJobPrefersPrimaryRowOverSteps() {
         let output = """
-        12345|kirill|COMPLETED|train-model|2026-03-27T09:00:00|2026-03-27T09:10:00|2026-03-27T11:00:00|01:50:00
-        12345.batch|kirill|COMPLETED|batch|2026-03-27T09:00:00|2026-03-27T09:10:00|2026-03-27T11:00:00|01:50:00
-        12345.extern|kirill|COMPLETED|extern|2026-03-27T09:00:00|2026-03-27T09:10:00|2026-03-27T11:00:00|01:50:00
+        12345|test-user|COMPLETED|train-model|2026-03-27T09:00:00|2026-03-27T09:10:00|2026-03-27T11:00:00|01:50:00
+        12345.batch|test-user|COMPLETED|batch|2026-03-27T09:00:00|2026-03-27T09:10:00|2026-03-27T11:00:00|01:50:00
+        12345.extern|test-user|COMPLETED|extern|2026-03-27T09:00:00|2026-03-27T09:10:00|2026-03-27T11:00:00|01:50:00
         """
 
-        let snapshot = SlurmParsing.parseHistoricalJob(output: output, clusterID: camdID, requestedJobID: "12345")
+        let snapshot = SlurmParsing.parseHistoricalJob(output: output, clusterID: alphaClusterID, requestedJobID: "12345")
 
         XCTAssertEqual(snapshot?.jobID, "12345")
         XCTAssertEqual(snapshot?.state, .completed)
@@ -52,29 +52,29 @@ final class SlurmParsingTests: XCTestCase {
 
     func testParseScontrolLogPathsExtractsExpandedStdoutAndStderr() {
         let output = """
-        JobId=148463 JobName=tb_gsm8k_t10
-           UserId=kirill.dubovikov(1001) GroupId=kirill(1001) MCS_label=N/A
-           WorkDir=/home/kirill.dubovikov/projects/gflownet-sampler
-           StdErr=/home/kirill.dubovikov/projects/gflownet-sampler/logs/tb_gsm8k_t10-148463.err
+        JobId=20001 JobName=train-model
+           UserId=test-user(1001) GroupId=test-group(1001) MCS_label=N/A
+           WorkDir=/home/test-user/project
+           StdErr=/home/test-user/project/logs/train-model-20001.err
            StdIn=/dev/null
-           StdOut=/home/kirill.dubovikov/projects/gflownet-sampler/logs/tb_gsm8k_t10-148463.out
+           StdOut=/home/test-user/project/logs/train-model-20001.out
         """
 
         let logPaths = SlurmParsing.parseScontrolLogPaths(output: output)
 
-        XCTAssertEqual(logPaths?.stdoutPath, "/home/kirill.dubovikov/projects/gflownet-sampler/logs/tb_gsm8k_t10-148463.out")
-        XCTAssertEqual(logPaths?.stderrPath, "/home/kirill.dubovikov/projects/gflownet-sampler/logs/tb_gsm8k_t10-148463.err")
-        XCTAssertEqual(logPaths?.workDirectory, "/home/kirill.dubovikov/projects/gflownet-sampler")
+        XCTAssertEqual(logPaths?.stdoutPath, "/home/test-user/project/logs/train-model-20001.out")
+        XCTAssertEqual(logPaths?.stderrPath, "/home/test-user/project/logs/train-model-20001.err")
+        XCTAssertEqual(logPaths?.workDirectory, "/home/test-user/project")
     }
 
     func testParseHistoricalLogPathsPrefersPrimaryRow() {
         let output = """
-        148463|/logs/%x-%j.out|/logs/%x-%j.err|/workdir
-        148463.batch|||
-        148463.extern|||
+        20001|/logs/%x-%j.out|/logs/%x-%j.err|/workdir
+        20001.batch|||
+        20001.extern|||
         """
 
-        let logPaths = SlurmParsing.parseHistoricalLogPaths(output: output, requestedJobID: "148463")
+        let logPaths = SlurmParsing.parseHistoricalLogPaths(output: output, requestedJobID: "20001")
 
         XCTAssertEqual(logPaths?.stdoutPath, "/logs/%x-%j.out")
         XCTAssertEqual(logPaths?.stderrPath, "/logs/%x-%j.err")

@@ -1,0 +1,48 @@
+name: Build macOS App
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-macos:
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Run Swift package tests
+        run: swift test
+
+      - name: Build release app bundle
+        run: |
+          xcodebuild \
+            -project "Cluster Watch.xcodeproj" \
+            -scheme "Cluster Watch" \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package app artifact
+        run: |
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent \
+            "build/Build/Products/Release/Cluster Watch.app" \
+            "dist/Cluster Watch-macos-unsigned.zip"
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cluster-watch-macos-app
+          path: dist/Cluster Watch-macos-unsigned.zip
+          if-no-files-found: error

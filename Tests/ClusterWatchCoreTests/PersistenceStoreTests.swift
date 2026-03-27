@@ -3,7 +3,7 @@ import XCTest
 @testable import ClusterWatchCore
 
 final class PersistenceStoreTests: XCTestCase {
-    private let camdID = ClusterID(rawValue: "camd")
+    private let alphaClusterID = ClusterID(rawValue: "cluster-alpha")
 
     func testRoundTripPersistsClustersAndWatchedJobs() async throws {
         let temporaryDirectory = FileManager.default.temporaryDirectory
@@ -13,16 +13,16 @@ final class PersistenceStoreTests: XCTestCase {
         let store = PersistenceStore(fileURL: fileURL)
         let state = PersistedAppState(
             clusters: [
-                ClusterConfig(id: camdID, displayName: "CAMD", sshAlias: "camd1", sshUsername: "", isEnabled: true, usernameOverride: "kirill")
+                ClusterConfig(id: alphaClusterID, displayName: "Cluster Alpha", sshAlias: "alpha-login", sshUsername: "", isEnabled: true, usernameOverride: "test-user")
             ],
-            globalUsernameFilter: "kirill",
+            globalUsernameFilter: "test-user",
             pollIntervalSeconds: 45,
             watchedJobs: [
                 WatchedJob(
-                    clusterID: camdID,
+                    clusterID: alphaClusterID,
                     jobID: "12345",
                     jobName: "train-model",
-                    owner: "kirill",
+                    owner: "test-user",
                     state: .running,
                     rawState: "RUNNING",
                     submitTime: Date(timeIntervalSince1970: 100),
@@ -36,7 +36,7 @@ final class PersistenceStoreTests: XCTestCase {
                 )
             ],
             reachabilityByCluster: [
-                camdID.rawValue: ClusterReachabilityState(status: .reachable, lastSuccessfulRefresh: Date(timeIntervalSince1970: 250), lastErrorMessage: nil)
+                alphaClusterID.rawValue: ClusterReachabilityState(status: .reachable, lastSuccessfulRefresh: Date(timeIntervalSince1970: 250), lastErrorMessage: nil)
             ]
         )
 
@@ -46,31 +46,31 @@ final class PersistenceStoreTests: XCTestCase {
         XCTAssertEqual(loaded, state)
     }
 
-    func testLegacyStateDecodesOldFixedClusterIDs() throws {
+    func testPersistedStateDecodesStringBackedClusterIDs() throws {
         let json = """
         {
           "clusters": [
             {
-              "displayName": "CAMD",
-              "id": "camd",
+              "displayName": "Cluster Alpha",
+              "id": "cluster-alpha",
               "isEnabled": true,
-              "sshAlias": "camd1",
+              "sshAlias": "alpha-login",
               "sshUsername": "",
-              "usernameOverride": "salem.lahlou"
+              "usernameOverride": "owner-a"
             },
             {
-              "displayName": "CSCC",
-              "id": "cscc",
+              "displayName": "Cluster Beta",
+              "id": "cluster-beta",
               "isEnabled": true,
-              "sshAlias": "cscc",
+              "sshAlias": "beta-login",
               "sshUsername": "",
               "usernameOverride": ""
             }
           ],
-          "globalUsernameFilter": "kirill",
+          "globalUsernameFilter": "test-user",
           "pollIntervalSeconds": 30,
           "reachabilityByCluster": {
-            "camd": {
+            "cluster-alpha": {
               "lastErrorMessage": null,
               "lastSuccessfulRefresh": "2026-03-27T09:00:00Z",
               "status": "reachable"
@@ -85,8 +85,8 @@ final class PersistenceStoreTests: XCTestCase {
 
         let state = try decoder.decode(PersistedAppState.self, from: Data(json.utf8))
 
-        XCTAssertEqual(state.clusters.map(\.id.rawValue), ["camd", "cscc"])
-        XCTAssertEqual(state.clusters.first?.usernameOverride, "salem.lahlou")
-        XCTAssertEqual(state.reachabilityByCluster["camd"]?.status, .reachable)
+        XCTAssertEqual(state.clusters.map(\.id.rawValue), ["cluster-alpha", "cluster-beta"])
+        XCTAssertEqual(state.clusters.first?.usernameOverride, "owner-a")
+        XCTAssertEqual(state.reachabilityByCluster["cluster-alpha"]?.status, .reachable)
     }
 }
