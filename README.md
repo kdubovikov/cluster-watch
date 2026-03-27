@@ -62,6 +62,9 @@ Cluster Watch is a native macOS menu bar app for monitoring Slurm jobs across an
    - SSH username overrides
    - Slurm owner filters
    - polling interval
+7. Enable notifications for `Cluster Watch` in macOS System Settings:
+   - `System Settings > Notifications > Cluster Watch`
+   - allow notifications and choose your preferred banner style if you want terminal-state alerts to appear
 
 ## Usage
 
@@ -76,6 +79,8 @@ Cluster Watch is a native macOS menu bar app for monitoring Slurm jobs across an
 ## Slurm Command Assumptions
 
 The app shells out through `/usr/bin/ssh` and expects key or agent based access only. Password prompts are not supported.
+
+Local job-finish notifications also depend on macOS notification permissions. If notifications are disabled for `Cluster Watch` in System Settings, the app can request and schedule notifications but macOS will not display them.
 
 Current jobs are queried with `squeue`, using a machine-readable format similar to:
 

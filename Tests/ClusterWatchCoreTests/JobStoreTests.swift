@@ -113,6 +113,63 @@ final class JobStoreTests: XCTestCase {
         XCTAssertEqual(notifications.sentJobIDs, ["12345"])
     }
 
+    func testTerminalWatchedJobDoesNotRegressToRunningIfCurrentQueryStillShowsIt() async {
+        let completedJob = WatchedJob(
+            clusterID: camdID,
+            jobID: "38071",
+            jobName: "pes2o-filter-q35-7n-r5",
+            owner: "salem.lahlou",
+            state: .completed,
+            rawState: "COMPLETED",
+            notificationSent: true,
+            submitTime: Date(timeIntervalSince1970: 100),
+            startTime: Date(timeIntervalSince1970: 100),
+            endTime: Date(timeIntervalSince1970: 200),
+            elapsedSeconds: 100,
+            firstSeenAt: Date(timeIntervalSince1970: 100),
+            lastUpdatedAt: Date(timeIntervalSince1970: 200),
+            lastSuccessfulRefreshAt: Date(timeIntervalSince1970: 200),
+            isStale: false
+        )
+
+        let lingeringCurrentJob = CurrentJob(
+            clusterID: camdID,
+            jobID: "38071",
+            jobName: "pes2o-filter-q35-7n-r5",
+            owner: "salem.lahlou",
+            state: .running,
+            rawState: "COMPLETING",
+            submitTime: Date(timeIntervalSince1970: 100),
+            startTime: Date(timeIntervalSince1970: 100),
+            elapsedSeconds: 101
+        )
+
+        let store = JobStore(
+            persistence: InMemoryPersistenceStore(),
+            slurmClient: MockSlurmClient(
+                currentResults: [camdID: .success([lingeringCurrentJob])],
+                historicalResults: [:]
+            ),
+            notificationManager: MockNotificationManager(),
+            nowProvider: { Date(timeIntervalSince1970: 260) },
+            initialState: PersistedAppState(
+                clusters: sampleClusters(),
+                globalUsernameFilter: "salem.lahlou",
+                pollIntervalSeconds: 30,
+                watchedJobs: [completedJob],
+                reachabilityByCluster: [:]
+            )
+        )
+
+        await store.refreshCluster(id: camdID)
+
+        XCTAssertEqual(store.watchedJobs[0].state, .completed)
+        XCTAssertEqual(store.watchedJobs[0].rawState, "COMPLETED")
+        XCTAssertEqual(store.watchedJobs[0].endTime, Date(timeIntervalSince1970: 200))
+        XCTAssertEqual(store.watchedJobs[0].lastSuccessfulRefreshAt, Date(timeIntervalSince1970: 260))
+        XCTAssertEqual(store.watchedJobs[0].lastUpdatedAt, Date(timeIntervalSince1970: 200))
+    }
+
     func testMissingHistoricalRecordKeepsLastKnownStateButClearsStale() async {
         let initialJob = WatchedJob(
             clusterID: csccID,
@@ -153,6 +210,104 @@ final class JobStoreTests: XCTestCase {
         XCTAssertEqual(store.watchedJobs[0].state, .pending)
         XCTAssertFalse(store.watchedJobs[0].isStale)
         XCTAssertEqual(store.watchedJobs[0].lastUpdatedAt, Date(timeIntervalSince1970: 120))
+    }
+
+    func testConcurrentClusterRefreshesDoNotOverwriteOtherClusterUpdates() async {
+        let camdJob = WatchedJob(
+            clusterID: camdID,
+            jobID: "38071",
+            jobName: "pes2o-filter-q35-7n-r5",
+            owner: "salem.lahlou",
+            state: .running,
+            rawState: "RUNNING",
+            submitTime: Date(timeIntervalSince1970: 100),
+            startTime: Date(timeIntervalSince1970: 100),
+            endTime: nil,
+            elapsedSeconds: 50,
+            firstSeenAt: Date(timeIntervalSince1970: 100),
+            lastUpdatedAt: Date(timeIntervalSince1970: 100),
+            lastSuccessfulRefreshAt: Date(timeIntervalSince1970: 100),
+            isStale: false
+        )
+
+        let csccJob = WatchedJob(
+            clusterID: csccID,
+            jobID: "148463",
+            jobName: "tb_gsm8k_t10",
+            owner: "kirill.dubovikov",
+            state: .pending,
+            rawState: "PENDING",
+            submitTime: Date(timeIntervalSince1970: 100),
+            startTime: nil,
+            endTime: nil,
+            elapsedSeconds: 0,
+            firstSeenAt: Date(timeIntervalSince1970: 100),
+            lastUpdatedAt: Date(timeIntervalSince1970: 100),
+            lastSuccessfulRefreshAt: Date(timeIntervalSince1970: 100),
+            isStale: false
+        )
+
+        let camdHistorical = JobSnapshot(
+            jobID: "38071",
+            owner: "salem.lahlou",
+            state: .completed,
+            rawState: "COMPLETED",
+            jobName: "pes2o-filter-q35-7n-r5",
+            submitTime: Date(timeIntervalSince1970: 100),
+            startTime: Date(timeIntervalSince1970: 100),
+            endTime: Date(timeIntervalSince1970: 200),
+            elapsedSeconds: 100
+        )
+
+        let csccCurrent = CurrentJob(
+            clusterID: csccID,
+            jobID: "148463",
+            jobName: "tb_gsm8k_t10",
+            owner: "kirill.dubovikov",
+            state: .running,
+            rawState: "RUNNING",
+            submitTime: Date(timeIntervalSince1970: 100),
+            startTime: Date(timeIntervalSince1970: 120),
+            elapsedSeconds: 30
+        )
+
+        let store = JobStore(
+            persistence: InMemoryPersistenceStore(),
+            slurmClient: MockSlurmClient(
+                currentResults: [
+                    camdID: .success([]),
+                    csccID: .success([csccCurrent]),
+                ],
+                historicalResults: [
+                    "camd:38071": .success(camdHistorical),
+                ],
+                historicalDelaysNanoseconds: [
+                    "camd:38071": 150_000_000
+                ]
+            ),
+            notificationManager: MockNotificationManager(),
+            nowProvider: { Date(timeIntervalSince1970: 250) },
+            initialState: PersistedAppState(
+                clusters: sampleClusters(),
+                globalUsernameFilter: "kirill.dubovikov",
+                pollIntervalSeconds: 30,
+                watchedJobs: [camdJob, csccJob],
+                reachabilityByCluster: [:]
+            )
+        )
+
+        async let camdRefresh: Void = store.refreshCluster(id: camdID)
+        async let csccRefresh: Void = store.refreshCluster(id: csccID)
+        _ = await (camdRefresh, csccRefresh)
+
+        let refreshedCAMDJob = try XCTUnwrap(store.watchedJobs.first { $0.jobID == "38071" })
+        XCTAssertEqual(refreshedCAMDJob.state, .completed)
+        XCTAssertTrue(refreshedCAMDJob.notificationSent)
+
+        let refreshedCSCCJob = try XCTUnwrap(store.watchedJobs.first { $0.jobID == "148463" })
+        XCTAssertEqual(refreshedCSCCJob.state, .running)
+        XCTAssertEqual(refreshedCSCCJob.rawState, "RUNNING")
+        XCTAssertEqual(refreshedCSCCJob.startTime, Date(timeIntervalSince1970: 120))
     }
 
     func testWatchedDependencyHelpersExposeUpstreamAndDownstreamJobs() async {
@@ -239,16 +394,25 @@ private actor InMemoryPersistenceStore: PersistenceStoring {
 private actor MockSlurmClient: SlurmClientProtocol {
     private let currentResults: [ClusterID: Result<[CurrentJob], Error>]
     private let historicalResults: [String: Result<JobSnapshot?, Error>]
+    private let currentDelaysNanoseconds: [ClusterID: UInt64]
+    private let historicalDelaysNanoseconds: [String: UInt64]
 
     init(
         currentResults: [ClusterID: Result<[CurrentJob], Error>],
-        historicalResults: [String: Result<JobSnapshot?, Error>]
+        historicalResults: [String: Result<JobSnapshot?, Error>],
+        currentDelaysNanoseconds: [ClusterID: UInt64] = [:],
+        historicalDelaysNanoseconds: [String: UInt64] = [:]
     ) {
         self.currentResults = currentResults
         self.historicalResults = historicalResults
+        self.currentDelaysNanoseconds = currentDelaysNanoseconds
+        self.historicalDelaysNanoseconds = historicalDelaysNanoseconds
     }
 
     func fetchCurrentJobs(for cluster: ClusterConfig, username: String) async throws -> [CurrentJob] {
+        if let delay = currentDelaysNanoseconds[cluster.id] {
+            try? await Task.sleep(nanoseconds: delay)
+        }
         if let result = currentResults[cluster.id] {
             return try result.get()
         }
@@ -256,7 +420,11 @@ private actor MockSlurmClient: SlurmClientProtocol {
     }
 
     func fetchHistoricalJob(for cluster: ClusterConfig, jobID: String) async throws -> JobSnapshot? {
-        if let result = historicalResults["\(cluster.id.rawValue):\(jobID)"] {
+        let key = "\(cluster.id.rawValue):\(jobID)"
+        if let delay = historicalDelaysNanoseconds[key] {
+            try? await Task.sleep(nanoseconds: delay)
+        }
+        if let result = historicalResults[key] {
             return try result.get()
         }
         return nil

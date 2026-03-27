@@ -1,7 +1,9 @@
 import SwiftUI
+import AppKit
 
 struct MenuBarRootView: View {
     @Bindable var store: JobStore
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         ZStack {
@@ -67,7 +69,10 @@ struct MenuBarRootView: View {
                     .controlSize(.small)
                     .disabled(!store.watchedJobs.contains(where: { $0.isTerminal }))
 
-                    SettingsLink {
+                    Button {
+                        NSApp.activate(ignoringOtherApps: true)
+                        openWindow(id: "settings")
+                    } label: {
                         Text("Settings")
                     }
                     .buttonStyle(.bordered)

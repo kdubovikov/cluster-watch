@@ -2,6 +2,10 @@ import SwiftUI
 
 @main
 struct ClusterWatchApp: App {
+    private enum WindowID {
+        static let settings = "settings"
+    }
+
     @State private var store: JobStore
 
     init() {
@@ -17,11 +21,12 @@ struct ClusterWatchApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        Settings {
+        Window("Cluster Watch Settings", id: WindowID.settings) {
             SettingsView(store: store)
                 .task {
                     await store.bootstrap()
                 }
         }
+        .defaultSize(width: 720, height: 620)
     }
 }

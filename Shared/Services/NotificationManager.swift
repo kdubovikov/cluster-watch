@@ -8,12 +8,14 @@ public protocol NotificationManaging: AnyObject {
 }
 
 @MainActor
-public final class NotificationManager: NotificationManaging {
+public final class NotificationManager: NSObject, NotificationManaging, UNUserNotificationCenterDelegate {
     private let center: UNUserNotificationCenter
     private var requestedAuthorization = false
 
     public init(center: UNUserNotificationCenter = .current()) {
         self.center = center
+        super.init()
+        self.center.delegate = self
     }
 
     public func requestAuthorizationIfNeeded() async {
@@ -37,5 +39,12 @@ public final class NotificationManager: NotificationManaging {
         )
 
         try? await center.add(request)
+    }
+
+    nonisolated public func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .list, .sound]
     }
 }

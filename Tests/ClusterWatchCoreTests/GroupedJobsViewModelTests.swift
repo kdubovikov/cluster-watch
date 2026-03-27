@@ -72,4 +72,68 @@ final class GroupedJobsViewModelTests: XCTestCase {
         XCTAssertEqual(sections.last?.bucket, .yesterday)
         XCTAssertEqual(sections.last?.jobs.first?.jobID, "100")
     }
+
+    func testCurrentGroupsNestDependencyChainInBrowseOrder() {
+        let root = CurrentJob(
+            clusterID: camdID,
+            jobID: "38071",
+            jobName: "pes2o-filter-q35-7n-r5",
+            owner: "salem.lahlou",
+            state: .running,
+            rawState: "RUNNING",
+            submitTime: Date(timeIntervalSince1970: 100),
+            startTime: Date(timeIntervalSince1970: 120),
+            elapsedSeconds: 120
+        )
+
+        let child = CurrentJob(
+            clusterID: camdID,
+            jobID: "38072",
+            jobName: "pes2o-hn-q35-7n-r4",
+            owner: "salem.lahlou",
+            state: .pending,
+            rawState: "PENDING",
+            submitTime: Date(timeIntervalSince1970: 100),
+            pendingReason: "Dependency",
+            dependencyExpression: "afterok:38071(unfulfilled)",
+            dependencyJobIDs: ["38071"],
+            dependencyIsActive: true
+        )
+
+        let grandchild = CurrentJob(
+            clusterID: camdID,
+            jobID: "38073",
+            jobName: "assemble-norag-all",
+            owner: "salem.lahlou",
+            state: .pending,
+            rawState: "PENDING",
+            submitTime: Date(timeIntervalSince1970: 100),
+            pendingReason: "Dependency",
+            dependencyExpression: "afterok:38072(unfulfilled)",
+            dependencyJobIDs: ["38072"],
+            dependencyIsActive: true
+        )
+
+        let standalone = CurrentJob(
+            clusterID: csccID,
+            jobID: "148463",
+            jobName: "tb_gsm8k_t10",
+            owner: "kirill.dubovikov",
+            state: .running,
+            rawState: "RUNNING",
+            submitTime: Date(timeIntervalSince1970: 200),
+            startTime: Date(timeIntervalSince1970: 220),
+            elapsedSeconds: 60
+        )
+
+        let groups = GroupedJobsViewModel.currentGroups(
+            for: [child, standalone, grandchild, root]
+        )
+
+        XCTAssertEqual(groups.count, 2)
+        XCTAssertEqual(groups[0].rows.map(\.job.jobID), ["148463"])
+        XCTAssertEqual(groups[1].rows.map(\.job.jobID), ["38071", "38072", "38073"])
+        XCTAssertEqual(groups[1].rows.map(\.depth), [0, 1, 2])
+        XCTAssertEqual(groups[1].rows.map(\.parentJobID), [nil, root.id, child.id])
+    }
 }

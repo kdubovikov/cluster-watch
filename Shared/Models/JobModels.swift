@@ -410,6 +410,11 @@ public struct WatchedJob: Identifiable, Codable, Hashable, Sendable {
         isStale = true
     }
 
+    public mutating func markRefreshed(at refreshedAt: Date) {
+        lastSuccessfulRefreshAt = refreshedAt
+        isStale = false
+    }
+
     public func waitingDuration(at date: Date) -> TimeInterval? {
         guard let submitTime else { return nil }
         if let startTime {

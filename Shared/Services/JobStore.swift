@@ -291,13 +291,18 @@ public final class JobStore {
 
     private func reconcileWatchedJobs(for cluster: ClusterConfig, currentJobs: [CurrentJob], refreshedAt: Date) async {
         let currentByID = Dictionary(uniqueKeysWithValues: currentJobs.map { ($0.jobID, $0) })
-        var updatedJobs = watchedJobs
+        var updatedJobs = watchedJobs.filter { $0.clusterID == cluster.id }
         var notifications: [WatchedJob] = []
 
-        for index in updatedJobs.indices where updatedJobs[index].clusterID == cluster.id {
+        for index in updatedJobs.indices {
             updatedJobs[index].isStale = false
 
             if let currentJob = currentByID[updatedJobs[index].jobID] {
+                if updatedJobs[index].isTerminal, !currentJob.state.isTerminal {
+                    updatedJobs[index].markRefreshed(at: refreshedAt)
+                    continue
+                }
+
                 let wasTerminal = updatedJobs[index].isTerminal
                 updatedJobs[index].apply(snapshot: currentJob.snapshot, refreshedAt: refreshedAt)
                 markNotificationIfNeeded(job: &updatedJobs[index], wasTerminal: wasTerminal, notifications: &notifications)
@@ -306,6 +311,11 @@ public final class JobStore {
 
             do {
                 if let historical = try await slurmClient.fetchHistoricalJob(for: cluster, jobID: updatedJobs[index].jobID) {
+                    if updatedJobs[index].isTerminal, !historical.state.isTerminal {
+                        updatedJobs[index].markRefreshed(at: refreshedAt)
+                        continue
+                    }
+
                     let wasTerminal = updatedJobs[index].isTerminal
                     updatedJobs[index].apply(snapshot: historical, refreshedAt: refreshedAt)
                     markNotificationIfNeeded(job: &updatedJobs[index], wasTerminal: wasTerminal, notifications: &notifications)
@@ -315,7 +325,7 @@ public final class JobStore {
             }
         }
 
-        watchedJobs = updatedJobs
+        mergeWatchedJobs(updatedJobs, for: cluster.id)
 
         for job in notifications {
             await notificationManager.sendTerminalNotification(for: job, clusterName: cluster.displayName)
@@ -329,11 +339,19 @@ public final class JobStore {
     }
 
     private func markClusterJobsStale(clusterID: ClusterID) {
-        var updatedJobs = watchedJobs
-        for index in updatedJobs.indices where updatedJobs[index].clusterID == clusterID {
+        var updatedJobs = watchedJobs.filter { $0.clusterID == clusterID }
+        for index in updatedJobs.indices {
             updatedJobs[index].markStale()
         }
-        watchedJobs = updatedJobs
+        mergeWatchedJobs(updatedJobs, for: clusterID)
+    }
+
+    private func mergeWatchedJobs(_ updatedJobs: [WatchedJob], for clusterID: ClusterID) {
+        let updatedJobsByID = Dictionary(uniqueKeysWithValues: updatedJobs.map { ($0.id, $0) })
+        watchedJobs = watchedJobs.map { existingJob in
+            guard existingJob.clusterID == clusterID else { return existingJob }
+            return updatedJobsByID[existingJob.id] ?? existingJob
+        }
     }
 
     private func persistAsync() {

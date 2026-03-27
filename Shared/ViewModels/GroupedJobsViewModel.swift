@@ -17,6 +17,22 @@ public struct GroupedJobsViewModel {
         public var jobs: [WatchedJob] { rows.map(\.job) }
     }
 
+    public struct CurrentGroupRow: Identifiable, Sendable {
+        public let job: CurrentJob
+        public let depth: Int
+        public let parentJobID: String?
+
+        public var id: String { job.id }
+    }
+
+    public struct CurrentGroup: Identifiable, Sendable {
+        public let rows: [CurrentGroupRow]
+        public let isDependencyLinked: Bool
+
+        public var id: String { rows.map(\.job.id).joined(separator: "|") }
+        public var jobs: [CurrentJob] { rows.map(\.job) }
+    }
+
     public enum Bucket: String, CaseIterable, Identifiable, Sendable {
         case today
         case yesterday
@@ -106,6 +122,31 @@ public struct GroupedJobsViewModel {
         return job.startTime ?? job.firstSeenAt
     }
 
+    public static func currentGroups(
+        for jobs: [CurrentJob],
+        maxDisplayedRows: Int? = nil
+    ) -> [CurrentGroup] {
+        let groups = currentDependencyGroups(for: jobs)
+
+        guard let maxDisplayedRows, maxDisplayedRows > 0 else {
+            return groups
+        }
+
+        var displayedRowCount = 0
+        var limitedGroups: [CurrentGroup] = []
+
+        for group in groups {
+            if displayedRowCount >= maxDisplayedRows, !limitedGroups.isEmpty {
+                break
+            }
+
+            limitedGroups.append(group)
+            displayedRowCount += group.rows.count
+        }
+
+        return limitedGroups
+    }
+
     private static func compare(_ lhs: WatchedJob, _ rhs: WatchedJob) -> Bool {
         if lhs.state.sortPriority != rhs.state.sortPriority {
             return lhs.state.sortPriority < rhs.state.sortPriority
@@ -118,11 +159,39 @@ public struct GroupedJobsViewModel {
         return lhs.jobID > rhs.jobID
     }
 
+    private static func compare(_ lhs: CurrentJob, _ rhs: CurrentJob) -> Bool {
+        if lhs.state.sortPriority != rhs.state.sortPriority {
+            return lhs.state.sortPriority < rhs.state.sortPriority
+        }
+
+        let lhsDate = lhs.startTime ?? lhs.submitTime ?? .distantPast
+        let rhsDate = rhs.startTime ?? rhs.submitTime ?? .distantPast
+
+        if lhsDate != rhsDate {
+            return lhsDate > rhsDate
+        }
+
+        return lhs.jobID > rhs.jobID
+    }
+
     private static func dependencyGroups(for jobs: [WatchedJob]) -> [Group] {
         let components = connectedComponents(in: jobs)
 
         return components
             .map(makeGroup(from:))
+            .sorted { lhs, rhs in
+                guard let lhsAnchor = lhs.jobs.first, let rhsAnchor = rhs.jobs.first else {
+                    return lhs.id < rhs.id
+                }
+                return compare(lhsAnchor, rhsAnchor)
+            }
+    }
+
+    private static func currentDependencyGroups(for jobs: [CurrentJob]) -> [CurrentGroup] {
+        let components = currentConnectedComponents(in: jobs)
+
+        return components
+            .map(makeCurrentGroup(from:))
             .sorted { lhs, rhs in
                 guard let lhsAnchor = lhs.jobs.first, let rhsAnchor = rhs.jobs.first else {
                     return lhs.id < rhs.id
@@ -152,6 +221,45 @@ public struct GroupedJobsViewModel {
 
             var stack = [job.id]
             var component: [WatchedJob] = []
+
+            while let currentID = stack.popLast() {
+                guard visited.insert(currentID).inserted else { continue }
+                guard let currentJob = jobsByID[currentID] else { continue }
+
+                component.append(currentJob)
+
+                for neighbor in adjacency[currentID, default: []] where !visited.contains(neighbor) {
+                    stack.append(neighbor)
+                }
+            }
+
+            components.append(component.sorted(by: compare))
+        }
+
+        return components
+    }
+
+    private static func currentConnectedComponents(in jobs: [CurrentJob]) -> [[CurrentJob]] {
+        let jobsByID = Dictionary(uniqueKeysWithValues: jobs.map { ($0.id, $0) })
+        var adjacency: [String: Set<String>] = Dictionary(uniqueKeysWithValues: jobs.map { ($0.id, []) })
+
+        for lhs in jobs {
+            for rhs in jobs where lhs.id != rhs.id && lhs.clusterID == rhs.clusterID {
+                if lhs.depends(on: rhs.jobID) || rhs.depends(on: lhs.jobID) {
+                    adjacency[lhs.id, default: []].insert(rhs.id)
+                    adjacency[rhs.id, default: []].insert(lhs.id)
+                }
+            }
+        }
+
+        var visited = Set<String>()
+        var components: [[CurrentJob]] = []
+
+        for job in jobs.sorted(by: compare) {
+            guard !visited.contains(job.id) else { continue }
+
+            var stack = [job.id]
+            var component: [CurrentJob] = []
 
             while let currentID = stack.popLast() {
                 guard visited.insert(currentID).inserted else { continue }
@@ -216,5 +324,56 @@ public struct GroupedJobsViewModel {
         }
 
         return Group(rows: rows, isDependencyLinked: true)
+    }
+
+    private static func makeCurrentGroup(from jobs: [CurrentJob]) -> CurrentGroup {
+        guard jobs.count > 1 else {
+            return CurrentGroup(
+                rows: jobs.map { CurrentGroupRow(job: $0, depth: 0, parentJobID: nil) },
+                isDependencyLinked: false
+            )
+        }
+
+        let componentJobIDs = Set(jobs.map(\.id))
+        let sortedRoots = jobs
+            .filter { job in
+                !jobs.contains { other in
+                    other.id != job.id && componentJobIDs.contains(other.id) && job.depends(on: other.jobID)
+                }
+            }
+            .sorted(by: compare)
+
+        let roots = sortedRoots.isEmpty ? jobs.sorted(by: compare) : sortedRoots
+        let childrenByParent = Dictionary(grouping: jobs) { child in
+            jobs
+                .filter { parent in
+                    parent.id != child.id && child.depends(on: parent.jobID)
+                }
+                .sorted(by: compare)
+                .first?.id
+        }
+
+        var rows: [CurrentGroupRow] = []
+        var visited = Set<String>()
+
+        func append(job: CurrentJob, depth: Int, parentJobID: String?) {
+            guard visited.insert(job.id).inserted else { return }
+            rows.append(CurrentGroupRow(job: job, depth: min(depth, 3), parentJobID: parentJobID))
+
+            let children = (childrenByParent[job.id] ?? []).sorted(by: compare)
+            for child in children {
+                append(job: child, depth: depth + 1, parentJobID: job.id)
+            }
+        }
+
+        for root in roots {
+            append(job: root, depth: 0, parentJobID: nil)
+        }
+
+        for remaining in jobs.sorted(by: compare) where !visited.contains(remaining.id) {
+            append(job: remaining, depth: 0, parentJobID: nil)
+        }
+
+        return CurrentGroup(rows: rows, isDependencyLinked: true)
     }
 }

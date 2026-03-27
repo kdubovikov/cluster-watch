@@ -117,6 +117,22 @@ public enum JobFormatting {
         }
     }
 
+    public static func dependencySummary(
+        state: NormalizedJobState,
+        dependencyStatus: JobDependencyStatus,
+        dependencyExpression: String?,
+        dependencyJobIDs: [String],
+        upstreamJobs: [CurrentJob]
+    ) -> String? {
+        dependencySummary(
+            state: state,
+            dependencyStatus: dependencyStatus,
+            dependencyExpression: dependencyExpression,
+            dependencyJobIDs: dependencyJobIDs,
+            upstreamLabels: upstreamJobs.map { "\($0.jobName) (#\($0.jobID))" }
+        )
+    }
+
     public static func dependencyReferenceText(
         dependencyExpression: String?,
         dependencyJobIDs: [String],
@@ -129,7 +145,26 @@ public enum JobFormatting {
         )
     }
 
+    public static func dependencyReferenceText(
+        dependencyExpression: String?,
+        dependencyJobIDs: [String],
+        upstreamJobs: [CurrentJob]
+    ) -> String? {
+        jobReferenceText(
+            dependencyExpression: dependencyExpression,
+            dependencyJobIDs: dependencyJobIDs,
+            upstreamLabels: upstreamJobs.map { "\($0.jobName) (#\($0.jobID))" }
+        )
+    }
+
     public static func downstreamSummary(_ downstreamJobs: [WatchedJob]) -> String? {
+        guard !downstreamJobs.isEmpty else { return nil }
+
+        let jobLabels = downstreamJobs.map { "\($0.jobName) (#\($0.jobID))" }
+        return "Unblocks \(abbreviatedList(jobLabels))"
+    }
+
+    public static func downstreamSummary(_ downstreamJobs: [CurrentJob]) -> String? {
         guard !downstreamJobs.isEmpty else { return nil }
 
         let jobLabels = downstreamJobs.map { "\($0.jobName) (#\($0.jobID))" }
@@ -222,18 +257,59 @@ public enum JobFormatting {
         return "Running not started"
     }
 
+    private static func dependencySummary(
+        state: NormalizedJobState,
+        dependencyStatus: JobDependencyStatus,
+        dependencyExpression: String?,
+        dependencyJobIDs: [String],
+        upstreamLabels: [String]
+    ) -> String? {
+        guard dependencyStatus != .none else { return nil }
+
+        let references = jobReferenceText(
+            dependencyExpression: dependencyExpression,
+            dependencyJobIDs: dependencyJobIDs,
+            upstreamLabels: upstreamLabels
+        )
+
+        switch dependencyStatus {
+        case .neverSatisfied:
+            return references.map { "Dependency never satisfied: \($0)" } ?? "Dependency never satisfied"
+        case .waiting:
+            return references.map { "Waiting on \($0)" } ?? "Waiting on dependency"
+        case .satisfied:
+            if state == .running || state.isTerminal {
+                return references.map { "Started after \($0)" } ?? "Dependencies resolved"
+            }
+            return references.map { "Dependencies resolved: \($0)" } ?? "Dependencies resolved"
+        case .none:
+            return nil
+        }
+    }
+
     private static func jobReferenceText(
         dependencyExpression: String?,
         dependencyJobIDs: [String],
         upstreamJobs: [WatchedJob]
     ) -> String? {
+        jobReferenceText(
+            dependencyExpression: dependencyExpression,
+            dependencyJobIDs: dependencyJobIDs,
+            upstreamLabels: upstreamJobs.map { "\($0.jobName) (#\($0.jobID))" }
+        )
+    }
+
+    private static func jobReferenceText(
+        dependencyExpression: String?,
+        dependencyJobIDs: [String],
+        upstreamLabels: [String]
+    ) -> String? {
         var labels: [String] = []
         var seen = Set<String>()
 
-        for job in upstreamJobs {
-            let baseID = JobIdentifier.baseID(for: job.jobID)
-            guard seen.insert(baseID).inserted else { continue }
-            labels.append("\(job.jobName) (#\(job.jobID))")
+        for label in upstreamLabels {
+            guard seen.insert(label).inserted else { continue }
+            labels.append(label)
         }
 
         for jobID in dependencyJobIDs {
