@@ -1,13 +1,16 @@
 # Cluster Watch
 
-Cluster Watch is a native macOS menu bar app for monitoring Slurm jobs on two clusters. It keeps watched jobs pinned until you explicitly unwatch them, preserves last-known job state during outages, and sends one local notification when a watched job reaches a terminal state.
+Cluster Watch is a native macOS menu bar app for monitoring Slurm jobs across any number of configured clusters. It keeps watched jobs pinned until you explicitly unwatch them, preserves last-known job state during outages, and sends one local notification when a watched job reaches a terminal state.
 
 ## Features
 
 - Native SwiftUI menu bar app built with `MenuBarExtra`
-- Two preconfigured cluster slots:
-  - `CAMD` using SSH alias `camd1`
-  - `CSCC` using SSH alias `cscc`
+- Any number of user-defined clusters, each with:
+  - display name
+  - SSH alias
+  - optional SSH username override
+  - optional Slurm owner override
+  - enabled/disabled state
 - Global username filter seeded from your macOS username, plus optional per-cluster overrides
 - Watched jobs grouped into history-style buckets:
   - Today
@@ -46,13 +49,14 @@ Cluster Watch is a native macOS menu bar app for monitoring Slurm jobs on two cl
 
 ## Setup
 
-1. Verify your SSH aliases work in Terminal:
-   - `ssh camd1`
-   - `ssh cscc`
+1. Verify the SSH aliases you plan to use work in Terminal:
+   - `ssh mycluster`
+   - `ssh othercluster`
 2. Open `Cluster Watch.xcodeproj` in Xcode.
 3. Select the `Cluster Watch` scheme.
 4. Build and run the app.
-5. Open Settings from the menu bar popup if you need to change:
+5. Open Settings from the menu bar popup and add one or more clusters.
+6. Configure:
    - display names
    - SSH aliases
    - SSH username overrides
@@ -76,13 +80,13 @@ The app shells out through `/usr/bin/ssh` and expects key or agent based access 
 Current jobs are queried with `squeue`, using a machine-readable format similar to:
 
 ```sh
-ssh camd1 "squeue -h -u <username> -o '%i|%u|%T|%j|%V|%S|%M|%E|%r'"
+ssh mycluster "squeue -h -u <username> -o '%i|%u|%T|%j|%V|%S|%M|%E|%r'"
 ```
 
 Watched jobs that disappear from `squeue` are checked with `sacct`:
 
 ```sh
-ssh camd1 "sacct -n -P -j <jobid> --format=JobIDRaw,User,State,JobName,Submit,Start,End,Elapsed,Reason"
+ssh mycluster "sacct -n -P -j <jobid> --format=JobIDRaw,User,State,JobName,Submit,Start,End,Elapsed,Reason"
 ```
 
 The parser prefers the primary row matching the raw/base job ID and ignores step rows such as `.batch` and `.extern`. Dependency data comes from:

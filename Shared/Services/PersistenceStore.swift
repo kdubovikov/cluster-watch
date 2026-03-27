@@ -27,9 +27,7 @@ public struct PersistedAppState: Codable, Equatable, Sendable {
             globalUsernameFilter: localUsername,
             pollIntervalSeconds: 30,
             watchedJobs: [],
-            reachabilityByCluster: Dictionary(
-                uniqueKeysWithValues: ClusterID.allCases.map { ($0.rawValue, ClusterReachabilityState()) }
-            )
+            reachabilityByCluster: [:]
         )
     }
 }

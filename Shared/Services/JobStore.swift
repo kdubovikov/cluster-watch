@@ -36,12 +36,18 @@ public final class JobStore {
         self.pollingCoordinator = pollingCoordinator
         self.nowProvider = nowProvider
 
-        self.clusters = Self.normalizedClusters(from: initialState.clusters)
+        let normalizedClusters = Self.normalizedClusters(from: initialState.clusters)
+        let normalizedReachability = Self.normalizedReachability(
+            from: initialState.reachabilityByCluster,
+            clusterIDs: normalizedClusters.map(\.id)
+        )
+
+        self.clusters = normalizedClusters
         self.globalUsernameFilter = initialState.globalUsernameFilter.trimmedOrEmpty
         self.pollIntervalSeconds = max(5, initialState.pollIntervalSeconds)
         self.watchedJobs = initialState.watchedJobs
-        self.currentJobsByCluster = Dictionary(uniqueKeysWithValues: ClusterID.allCases.map { ($0, []) })
-        self.reachabilityByCluster = Self.normalizedReachability(from: initialState.reachabilityByCluster)
+        self.currentJobsByCluster = Self.emptyCurrentJobs(for: normalizedClusters)
+        self.reachabilityByCluster = normalizedReachability
     }
 
     public convenience init(initialState: PersistedAppState = PersistedAppState.defaultState()) {
@@ -89,7 +95,11 @@ public final class JobStore {
         globalUsernameFilter = persisted.globalUsernameFilter.trimmedOrEmpty.isEmpty ? NSUserName() : persisted.globalUsernameFilter.trimmedOrEmpty
         pollIntervalSeconds = max(5, persisted.pollIntervalSeconds)
         watchedJobs = persisted.watchedJobs
-        reachabilityByCluster = Self.normalizedReachability(from: persisted.reachabilityByCluster)
+        currentJobsByCluster = Self.emptyCurrentJobs(for: clusters)
+        reachabilityByCluster = Self.normalizedReachability(
+            from: persisted.reachabilityByCluster,
+            clusterIDs: clusters.map(\.id)
+        )
     }
 
     public func start() {
@@ -118,6 +128,11 @@ public final class JobStore {
         self.clusters = Self.normalizedClusters(from: clusters)
         self.globalUsernameFilter = globalUsernameFilter.trimmedOrEmpty.isEmpty ? NSUserName() : globalUsernameFilter.trimmedOrEmpty
         self.pollIntervalSeconds = max(5, pollIntervalSeconds)
+        self.currentJobsByCluster = Self.normalizedCurrentJobs(from: currentJobsByCluster, clusterIDs: self.clusters.map(\.id))
+        self.reachabilityByCluster = Self.normalizedReachability(
+            from: Dictionary(uniqueKeysWithValues: reachabilityByCluster.map { ($0.key.rawValue, $0.value) }),
+            clusterIDs: self.clusters.map(\.id)
+        )
         configurePolling()
         persistAsync()
 
@@ -157,7 +172,15 @@ public final class JobStore {
     }
 
     public func clusterName(for clusterID: ClusterID) -> String {
-        clusters.first(where: { $0.id == clusterID })?.displayName ?? clusterID.defaultDisplayName
+        if let configured = clusters.first(where: { $0.id == clusterID })?.displayName.trimmedOrEmpty,
+           !configured.isEmpty {
+            return configured
+        }
+        return "Unknown Cluster"
+    }
+
+    public func hasWatchedJobs(for clusterID: ClusterID) -> Bool {
+        watchedJobs.contains { $0.clusterID == clusterID }
     }
 
     public func watchedDependencies(for job: WatchedJob) -> [WatchedJob] {
@@ -187,15 +210,12 @@ public final class JobStore {
     public func refreshAll() async {
         let enabledClusterIDs = clusters.filter(\.isEnabled).map(\.id)
 
-        switch enabledClusterIDs.count {
-        case 0:
-            return
-        case 1:
-            await refreshCluster(id: enabledClusterIDs[0])
-        default:
-            async let firstRefresh: Void = refreshCluster(id: enabledClusterIDs[0])
-            async let secondRefresh: Void = refreshCluster(id: enabledClusterIDs[1])
-            _ = await (firstRefresh, secondRefresh)
+        await withTaskGroup(of: Void.self) { group in
+            for clusterID in enabledClusterIDs {
+                group.addTask { [weak self] in
+                    await self?.refreshCluster(id: clusterID)
+                }
+            }
         }
     }
 
@@ -333,20 +353,40 @@ public final class JobStore {
     }
 
     private static func normalizedClusters(from persistedClusters: [ClusterConfig]) -> [ClusterConfig] {
-        let clusterLookup = Dictionary(uniqueKeysWithValues: persistedClusters.map { ($0.id, $0) })
-        return ClusterID.allCases.map { clusterLookup[$0] ?? ClusterConfig.defaultValue(for: $0) }
-    }
+        var seenIDs = Set<ClusterID>()
+        var result: [ClusterConfig] = []
 
-    private static func normalizedReachability(from persistedReachability: [String: ClusterReachabilityState]) -> [ClusterID: ClusterReachabilityState] {
-        var result = Dictionary(uniqueKeysWithValues: ClusterID.allCases.map { ($0, ClusterReachabilityState()) })
+        for (index, cluster) in persistedClusters.enumerated() {
+            var normalized = cluster
+            let displayName = normalized.displayName.trimmedOrEmpty
+            normalized.displayName = displayName.isEmpty ? "Cluster \(index + 1)" : displayName
 
-        for (key, value) in persistedReachability {
-            if let clusterID = ClusterID(rawValue: key) {
-                result[clusterID] = value
+            while seenIDs.contains(normalized.id) {
+                normalized = normalized.withID(.new())
             }
+
+            seenIDs.insert(normalized.id)
+            result.append(normalized)
         }
 
         return result
+    }
+
+    private static func emptyCurrentJobs(for clusters: [ClusterConfig]) -> [ClusterID: [CurrentJob]] {
+        Dictionary(uniqueKeysWithValues: clusters.map { ($0.id, []) })
+    }
+
+    private static func normalizedCurrentJobs(from existingJobs: [ClusterID: [CurrentJob]], clusterIDs: [ClusterID]) -> [ClusterID: [CurrentJob]] {
+        Dictionary(uniqueKeysWithValues: clusterIDs.map { ($0, existingJobs[$0] ?? []) })
+    }
+
+    private static func normalizedReachability(
+        from persistedReachability: [String: ClusterReachabilityState],
+        clusterIDs: [ClusterID]
+    ) -> [ClusterID: ClusterReachabilityState] {
+        Dictionary(uniqueKeysWithValues: clusterIDs.map { clusterID in
+            (clusterID, persistedReachability[clusterID.rawValue] ?? ClusterReachabilityState())
+        })
     }
 
     private func compareCurrentJobs(lhs: CurrentJob, rhs: CurrentJob) -> Bool {

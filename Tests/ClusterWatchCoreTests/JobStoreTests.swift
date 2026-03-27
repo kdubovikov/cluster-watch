@@ -4,9 +4,12 @@ import XCTest
 
 @MainActor
 final class JobStoreTests: XCTestCase {
+    private let camdID = ClusterID(rawValue: "camd")
+    private let csccID = ClusterID(rawValue: "cscc")
+
     func testUnreachableClusterKeepsWatchedJobAndMarksItStale() async {
         let watchedJob = WatchedJob(
-            clusterID: .camd,
+            clusterID: camdID,
             jobID: "12345",
             jobName: "train-model",
             owner: "kirill",
@@ -25,7 +28,7 @@ final class JobStoreTests: XCTestCase {
         let persistence = InMemoryPersistenceStore()
         let notifications = MockNotificationManager()
         let client = MockSlurmClient(
-            currentResults: [.camd: .failure(SlurmClientError.commandFailed("Host unreachable"))],
+            currentResults: [camdID: .failure(SlurmClientError.commandFailed("Host unreachable"))],
             historicalResults: [:]
         )
 
@@ -35,7 +38,7 @@ final class JobStoreTests: XCTestCase {
             notificationManager: notifications,
             nowProvider: { Date(timeIntervalSince1970: 300) },
             initialState: PersistedAppState(
-                clusters: ClusterConfig.defaultClusters(),
+                clusters: sampleClusters(),
                 globalUsernameFilter: "kirill",
                 pollIntervalSeconds: 30,
                 watchedJobs: [watchedJob],
@@ -43,17 +46,17 @@ final class JobStoreTests: XCTestCase {
             )
         )
 
-        await store.refreshCluster(id: .camd)
+        await store.refreshCluster(id: camdID)
 
         XCTAssertEqual(store.watchedJobs.count, 1)
         XCTAssertTrue(store.watchedJobs[0].isStale)
         XCTAssertEqual(store.watchedJobs[0].state, .running)
-        XCTAssertEqual(store.reachability(for: .camd).status, .unreachable)
+        XCTAssertEqual(store.reachability(for: camdID).status, .unreachable)
     }
 
     func testTerminalTransitionSendsNotificationOnlyOnce() async {
         let initialJob = WatchedJob(
-            clusterID: .camd,
+            clusterID: camdID,
             jobID: "12345",
             jobName: "train-model",
             owner: "kirill",
@@ -84,7 +87,7 @@ final class JobStoreTests: XCTestCase {
         )
 
         let client = MockSlurmClient(
-            currentResults: [.camd: .success([])],
+            currentResults: [camdID: .success([])],
             historicalResults: ["camd:12345": .success(historicalSnapshot)]
         )
 
@@ -94,7 +97,7 @@ final class JobStoreTests: XCTestCase {
             notificationManager: notifications,
             nowProvider: { Date(timeIntervalSince1970: 500) },
             initialState: PersistedAppState(
-                clusters: ClusterConfig.defaultClusters(),
+                clusters: sampleClusters(),
                 globalUsernameFilter: "kirill",
                 pollIntervalSeconds: 30,
                 watchedJobs: [initialJob],
@@ -102,8 +105,8 @@ final class JobStoreTests: XCTestCase {
             )
         )
 
-        await store.refreshCluster(id: .camd)
-        await store.refreshCluster(id: .camd)
+        await store.refreshCluster(id: camdID)
+        await store.refreshCluster(id: camdID)
 
         XCTAssertEqual(store.watchedJobs[0].state, .completed)
         XCTAssertTrue(store.watchedJobs[0].notificationSent)
@@ -112,7 +115,7 @@ final class JobStoreTests: XCTestCase {
 
     func testMissingHistoricalRecordKeepsLastKnownStateButClearsStale() async {
         let initialJob = WatchedJob(
-            clusterID: .cscc,
+            clusterID: csccID,
             jobID: "999",
             jobName: "wait-job",
             owner: "kirill",
@@ -131,13 +134,13 @@ final class JobStoreTests: XCTestCase {
         let store = JobStore(
             persistence: InMemoryPersistenceStore(),
             slurmClient: MockSlurmClient(
-                currentResults: [.cscc: .success([])],
+                currentResults: [csccID: .success([])],
                 historicalResults: ["cscc:999": .success(nil)]
             ),
             notificationManager: MockNotificationManager(),
             nowProvider: { Date(timeIntervalSince1970: 500) },
             initialState: PersistedAppState(
-                clusters: ClusterConfig.defaultClusters(),
+                clusters: sampleClusters(),
                 globalUsernameFilter: "kirill",
                 pollIntervalSeconds: 30,
                 watchedJobs: [initialJob],
@@ -145,7 +148,7 @@ final class JobStoreTests: XCTestCase {
             )
         )
 
-        await store.refreshCluster(id: .cscc)
+        await store.refreshCluster(id: csccID)
 
         XCTAssertEqual(store.watchedJobs[0].state, .pending)
         XCTAssertFalse(store.watchedJobs[0].isStale)
@@ -154,7 +157,7 @@ final class JobStoreTests: XCTestCase {
 
     func testWatchedDependencyHelpersExposeUpstreamAndDownstreamJobs() async {
         let dependencyJob = WatchedJob(
-            clusterID: .camd,
+            clusterID: camdID,
             jobID: "12345",
             jobName: "preprocess",
             owner: "kirill",
@@ -171,7 +174,7 @@ final class JobStoreTests: XCTestCase {
         )
 
         let dependentJob = WatchedJob(
-            clusterID: .camd,
+            clusterID: camdID,
             jobID: "22300",
             jobName: "train-model",
             owner: "kirill",
@@ -197,7 +200,7 @@ final class JobStoreTests: XCTestCase {
             notificationManager: MockNotificationManager(),
             nowProvider: { Date(timeIntervalSince1970: 500) },
             initialState: PersistedAppState(
-                clusters: ClusterConfig.defaultClusters(),
+                clusters: sampleClusters(),
                 globalUsernameFilter: "kirill",
                 pollIntervalSeconds: 30,
                 watchedJobs: [dependencyJob, dependentJob],
@@ -207,6 +210,13 @@ final class JobStoreTests: XCTestCase {
 
         XCTAssertEqual(store.watchedDependencies(for: dependentJob).map(\.jobID), ["12345"])
         XCTAssertEqual(store.watchedDependents(for: dependencyJob).map(\.jobID), ["22300"])
+    }
+
+    private func sampleClusters() -> [ClusterConfig] {
+        [
+            ClusterConfig(id: camdID, displayName: "CAMD", sshAlias: "camd1"),
+            ClusterConfig(id: csccID, displayName: "CSCC", sshAlias: "cscc")
+        ]
     }
 }
 

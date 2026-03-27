@@ -16,6 +16,11 @@ let package = Package(
         .target(
             name: "ClusterWatchCore",
             path: "Shared"
+        ),
+        .testTarget(
+            name: "ClusterWatchCoreTests",
+            dependencies: ["ClusterWatchCore"],
+            path: "Tests/ClusterWatchCoreTests"
         )
     ]
 )

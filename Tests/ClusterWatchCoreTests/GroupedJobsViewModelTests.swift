@@ -3,12 +3,15 @@ import XCTest
 @testable import ClusterWatchCore
 
 final class GroupedJobsViewModelTests: XCTestCase {
+    private let camdID = ClusterID(rawValue: "camd")
+    private let csccID = ClusterID(rawValue: "cscc")
+
     func testBucketsAndOrderingPreferRunningThenRecent() {
         let calendar = Calendar(identifier: .gregorian)
         let referenceDate = calendar.date(from: DateComponents(year: 2026, month: 3, day: 27, hour: 12, minute: 0))!
 
         let runningJob = WatchedJob(
-            clusterID: .camd,
+            clusterID: camdID,
             jobID: "300",
             jobName: "running",
             owner: "kirill",
@@ -25,7 +28,7 @@ final class GroupedJobsViewModelTests: XCTestCase {
         )
 
         let completedJob = WatchedJob(
-            clusterID: .camd,
+            clusterID: camdID,
             jobID: "100",
             jobName: "completed",
             owner: "kirill",
@@ -42,7 +45,7 @@ final class GroupedJobsViewModelTests: XCTestCase {
         )
 
         let pendingJob = WatchedJob(
-            clusterID: .cscc,
+            clusterID: csccID,
             jobID: "200",
             jobName: "pending",
             owner: "kirill",

@@ -26,8 +26,12 @@ struct SettingsView: View {
                         header
                         monitoringCard
 
-                        ForEach($draft.clusters) { $cluster in
-                            clusterCard($cluster)
+                        if draft.clusters.isEmpty {
+                            emptyClustersCard
+                        } else {
+                            ForEach(draft.clusters.indices, id: \.self) { index in
+                                clusterCard($draft.clusters[index], index: index)
+                            }
                         }
                     }
                     .padding(24)
@@ -47,12 +51,23 @@ struct SettingsView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Cluster Watch Settings")
-                .font(.system(size: 28, weight: .bold, design: .rounded))
-            Text("Configure cluster aliases, usernames, and polling without leaving the menu bar workflow.")
-                .font(.system(.subheadline, design: .rounded))
-                .foregroundStyle(.secondary)
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Cluster Watch Settings")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                Text("Configure cluster aliases, usernames, and polling without leaving the menu bar workflow.")
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button {
+                draft.clusters.append(.empty(index: draft.clusters.count + 1))
+            } label: {
+                Label("Add Cluster", systemImage: "plus")
+            }
+            .buttonStyle(.borderedProminent)
         }
     }
 
@@ -74,27 +89,55 @@ struct SettingsView: View {
         }
     }
 
-    private func clusterCard(_ cluster: Binding<ClusterDraft>) -> some View {
+    private var emptyClustersCard: some View {
         SettingsCard(
-            title: cluster.wrappedValue.id.defaultDisplayName,
+            title: "No Clusters Configured",
+            subtitle: "Add one or more Slurm clusters. Each cluster should map to a working SSH alias in your local `~/.ssh/config`."
+        ) {
+            Button {
+                draft.clusters.append(.empty(index: 1))
+            } label: {
+                Label("Add Your First Cluster", systemImage: "plus")
+            }
+            .buttonStyle(.borderedProminent)
+        }
+    }
+
+    private func clusterCard(_ cluster: Binding<ClusterDraft>, index: Int) -> some View {
+        let hasWatchedJobs = store.hasWatchedJobs(for: cluster.wrappedValue.id)
+
+        return SettingsCard(
+            title: cluster.wrappedValue.displayName.trimmedOrEmpty.isEmpty ? "Cluster \(index + 1)" : cluster.wrappedValue.displayName.trimmedOrEmpty,
             subtitle: "Aliases should match working `ssh` entries in your local `~/.ssh/config`."
         ) {
-            Toggle(isOn: cluster.isEnabled) {
-                Text("Enabled")
-                    .font(.system(.body, design: .rounded, weight: .medium))
+            HStack {
+                Toggle(isOn: cluster.isEnabled) {
+                    Text("Enabled")
+                        .font(.system(.body, design: .rounded, weight: .medium))
+                }
+                .toggleStyle(.switch)
+
+                Spacer()
+
+                Button(role: .destructive) {
+                    draft.clusters.remove(at: index)
+                } label: {
+                    Label("Remove Cluster", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+                .disabled(hasWatchedJobs)
             }
-            .toggleStyle(.switch)
             .padding(.bottom, 4)
 
             SettingsTextRow(
                 title: "Display name",
-                prompt: "CAMD",
+                prompt: "My Cluster",
                 text: cluster.displayName
             )
 
             SettingsTextRow(
                 title: "SSH alias",
-                prompt: "camd1",
+                prompt: "mycluster",
                 text: cluster.sshAlias,
                 usesMonospacedFont: true
             )
@@ -112,6 +155,12 @@ struct SettingsView: View {
                 text: cluster.usernameOverride,
                 usesMonospacedFont: true
             )
+
+            if hasWatchedJobs {
+                Text("Unwatch this cluster's jobs before removing it.")
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -130,6 +179,13 @@ struct SettingsView: View {
                 draft = SettingsDraft(from: store)
                 saveMessage = "Reloaded current settings."
                 hasLoadedDraft = true
+            }
+            .buttonStyle(.bordered)
+
+            Button {
+                draft.clusters.append(.empty(index: draft.clusters.count + 1))
+            } label: {
+                Label("Add Cluster", systemImage: "plus")
             }
             .buttonStyle(.bordered)
 
@@ -244,7 +300,7 @@ private struct SettingsStepperRow: View {
 private struct SettingsDraft {
     var globalUsernameFilter: String = NSUserName()
     var pollIntervalSeconds: Double = 30
-    var clusters: [ClusterDraft] = ClusterID.allCases.map { ClusterDraft(cluster: .defaultValue(for: $0)) }
+    var clusters: [ClusterDraft] = []
 
     init() {}
 
@@ -281,6 +337,12 @@ private struct ClusterDraft: Identifiable {
             sshUsername: sshUsername,
             isEnabled: isEnabled,
             usernameOverride: usernameOverride
+        )
+    }
+
+    static func empty(index: Int) -> ClusterDraft {
+        ClusterDraft(
+            cluster: ClusterConfig.empty(named: "Cluster \(index)")
         )
     }
 }

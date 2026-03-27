@@ -2,13 +2,15 @@ import XCTest
 @testable import ClusterWatchCore
 
 final class SlurmParsingTests: XCTestCase {
+    private let camdID = ClusterID(rawValue: "camd")
+
     func testParseCurrentJobsExtractsTimingFields() {
         let output = """
         12345|kirill|RUNNING|train-model|2026-03-27T09:00:00|2026-03-27T09:10:00|01:25:00|NULL|None
         12346|kirill|PENDING|preprocess|2026-03-27T10:00:00|N/A|00:15:00|afterok:12345|Dependency
         """
 
-        let jobs = SlurmParsing.parseCurrentJobs(output: output, clusterID: .camd)
+        let jobs = SlurmParsing.parseCurrentJobs(output: output, clusterID: camdID)
 
         XCTAssertEqual(jobs.count, 2)
         XCTAssertEqual(jobs[0].jobID, "12345")
@@ -28,7 +30,7 @@ final class SlurmParsingTests: XCTestCase {
         12345.extern|kirill|COMPLETED|extern|2026-03-27T09:00:00|2026-03-27T09:10:00|2026-03-27T11:00:00|01:50:00
         """
 
-        let snapshot = SlurmParsing.parseHistoricalJob(output: output, clusterID: .camd, requestedJobID: "12345")
+        let snapshot = SlurmParsing.parseHistoricalJob(output: output, clusterID: camdID, requestedJobID: "12345")
 
         XCTAssertEqual(snapshot?.jobID, "12345")
         XCTAssertEqual(snapshot?.state, .completed)
