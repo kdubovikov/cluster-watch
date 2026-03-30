@@ -53,28 +53,84 @@ Cluster Watch is a native macOS menu bar app for monitoring Slurm jobs across an
 ## Requirements
 
 - macOS 14 or newer
-- Full Xcode for building and running the app target
+- Full Xcode only if you want to build the app from source
 - Working non-interactive SSH aliases in `~/.ssh/config`
 - `squeue` and `sacct` available on the remote cluster login nodes
 
-## Setup
+## SSH Alias Setup
 
-1. Verify the SSH aliases you plan to use work in Terminal:
-   - `ssh mycluster`
-   - `ssh othercluster`
-2. Open `Cluster Watch.xcodeproj` in Xcode.
-3. Select the `Cluster Watch` scheme.
-4. Build and run the app.
-5. Open Settings from the menu bar popup and add one or more clusters.
-6. Configure:
-   - display names
-   - SSH aliases
-   - SSH username overrides
-   - Slurm owner filters
-   - polling interval
-7. Enable notifications for `Cluster Watch` in macOS System Settings:
-   - `System Settings > Notifications > Cluster Watch`
-   - allow notifications and choose your preferred banner style if you want terminal-state alerts to appear
+Cluster Watch connects to clusters through your local SSH client, so each cluster should already be reachable with a short alias from Terminal before you add it to the app.
+
+Example `~/.ssh/config`:
+
+```sshconfig
+Host cluster-alpha
+    HostName login.cluster-alpha.example.edu
+    User your-ssh-login
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+    ServerAliveInterval 30
+
+Host cluster-beta
+    HostName login.cluster-beta.example.edu
+    User your-ssh-login
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+    ServerAliveInterval 30
+```
+
+Notes:
+- `Host` is the alias you will enter in Cluster Watch
+- `User` is optional in the app if it is already set in `~/.ssh/config`
+- key-based or agent-based authentication is required
+- password prompts and MFA prompts that require interactive terminal input are not supported by the app
+
+Before launching the app, verify each alias manually:
+
+```sh
+ssh cluster-alpha
+ssh cluster-beta
+```
+
+If the cluster requires a specific Slurm environment, also verify these commands work after login:
+
+```sh
+squeue --version
+sacct --version
+```
+
+## App Setup
+
+1. Download the latest release from the GitHub releases page:
+   - [Latest release](https://github.com/kdubovikov/cluster-watch/releases/latest)
+2. Extract the downloaded zip and open `Cluster Watch.app`.
+3. If macOS warns because the app is unsigned, acknowledge the Gatekeeper prompt using your normal macOS workflow for unsigned apps.
+4. Find the app icon in the macOS menu bar.
+5. Open `Settings`.
+6. Add one or more clusters.
+7. For each cluster, configure:
+   - `Display name`: the label shown in the UI
+   - `SSH alias`: the alias from `~/.ssh/config`, such as `cluster-alpha`
+   - `SSH username override`: optional, only if you want `user@alias` to differ from your SSH config
+   - `Job owner override`: optional, only if the Slurm username to filter on differs from your default username
+   - `Enabled`: whether Cluster Watch should poll this cluster
+8. Set the global username filter.
+9. Adjust the polling interval if the default `30 seconds` is not suitable.
+10. Close Settings and use `Refresh` once to confirm the cluster list is working.
+
+If you prefer to build from source instead:
+
+1. Open `Cluster Watch.xcodeproj` in Xcode.
+2. Select the `Cluster Watch` scheme.
+3. Build and run the app from Xcode.
+
+## First Run Checklist
+
+- Check that each enabled cluster shows as reachable in the header
+- Confirm the `Browse Unwatched Jobs` section shows only your jobs by default
+- Watch one running or pending job and confirm it appears in the watched section
+- If the job is Slurm-managed and has stdout/stderr paths, try the log tail action
+- Enable notifications for `Cluster Watch` in `System Settings > Notifications > Cluster Watch` if you want terminal-state alerts
 
 ## Usage
 
@@ -126,6 +182,14 @@ ssh mycluster "tail -n 200 -- <remote-log-path>"
 ```
 
 This means the log tail window reads the file on the remote cluster. If Slurm reports a future stdout/stderr path for a pending job but the file has not been created yet, the app does not expose `Tail` until the job is no longer pending.
+
+## Troubleshooting
+
+- If a cluster shows as unreachable, first verify `ssh <alias>` still works in Terminal.
+- If a cluster is reachable but no jobs appear, check the username filter and any per-cluster job owner override.
+- If a cluster works in Terminal but not in the app, confirm the alias in Settings exactly matches the `Host` entry in `~/.ssh/config`.
+- If job notifications do not appear, confirm notifications are enabled in macOS System Settings and remember that alerts are only sent once per watched job transition to a terminal state.
+- If log tailing opens but shows no file yet, the job may still be pending or may not have created the Slurm-managed log file yet.
 
 ## Persistence And Outages
 
