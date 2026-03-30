@@ -39,7 +39,8 @@ def ensure_group(root_group, relative_path)
   current_group = root_group
 
   relative_path.split('/').each do |component|
-    current_group = current_group.find_subpath(component, true)
+    next_group = current_group.groups.find { |group| group.display_name == component || group.path == component }
+    current_group = next_group || current_group.new_group(component, component)
   end
 
   current_group

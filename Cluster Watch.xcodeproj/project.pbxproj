@@ -102,6 +102,7 @@
 				62594D2BD38AE38C12F62238 /* Reachability.swift */,
 			);
 			name = Models;
+			path = Models;
 			sourceTree = "<group>";
 		};
 		2A0C444D4665684473B4931E /* Frameworks */ = {
@@ -124,6 +125,7 @@
 				1E9F93E1A451FE2499914200 /* SettingsView.swift */,
 			);
 			name = UI;
+			path = UI;
 			sourceTree = "<group>";
 		};
 		46F31F21E48E5932F83C3EFF /* ClusterWatchCoreTests */ = {
@@ -135,6 +137,7 @@
 				CB5B3086795152812975D0A3 /* JobStoreTests.swift */,
 			);
 			name = ClusterWatchCoreTests;
+			path = ClusterWatchCoreTests;
 			sourceTree = "<group>";
 		};
 		4D3243A75ECE94CAE1E16AB4 /* Tests */ = {
@@ -143,6 +146,7 @@
 				46F31F21E48E5932F83C3EFF /* ClusterWatchCoreTests */,
 			);
 			name = Tests;
+			path = Tests;
 			sourceTree = "<group>";
 		};
 		55FDA48AFB5971623B064C3A /* ViewModels */ = {
@@ -151,6 +155,7 @@
 				E4D671582047C6DAAF270157 /* GroupedJobsViewModel.swift */,
 			);
 			name = ViewModels;
+			path = ViewModels;
 			sourceTree = "<group>";
 		};
 		720582C7F7CAF77B3958E3CF /* Products */ = {
@@ -174,6 +179,7 @@
 				067C0A4ADDB375B84045E969 /* JobStore.swift */,
 			);
 			name = Services;
+			path = Services;
 			sourceTree = "<group>";
 		};
 		BACB263A8E86743DA436C167 /* Cluster Watch */ = {
@@ -184,6 +190,7 @@
 				3624D55BEEC29131E897DE34 /* UI */,
 			);
 			name = "Cluster Watch";
+			path = "Cluster Watch";
 			sourceTree = "<group>";
 		};
 		DCA4E209CBBA21E5D6B99EB0 /* Shared */ = {
@@ -194,6 +201,7 @@
 				55FDA48AFB5971623B064C3A /* ViewModels */,
 			);
 			name = Shared;
+			path = Shared;
 			sourceTree = "<group>";
 		};
 		DF596F230E561D7CF995F674 = {
