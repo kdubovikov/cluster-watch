@@ -30,6 +30,10 @@ struct MenuBarRootView: View {
                                 openLogTailWindow: {
                                     NSApp.activate(ignoringOtherApps: true)
                                     openWindow(id: "log-tail")
+                                },
+                                openLaunchCommandWindow: {
+                                    NSApp.activate(ignoringOtherApps: true)
+                                    openWindow(id: "launch-command")
                                 }
                             )
                             BrowseJobsSectionView(
@@ -38,6 +42,10 @@ struct MenuBarRootView: View {
                                 openLogTailWindow: {
                                     NSApp.activate(ignoringOtherApps: true)
                                     openWindow(id: "log-tail")
+                                },
+                                openLaunchCommandWindow: {
+                                    NSApp.activate(ignoringOtherApps: true)
+                                    openWindow(id: "launch-command")
                                 }
                             )
                         }

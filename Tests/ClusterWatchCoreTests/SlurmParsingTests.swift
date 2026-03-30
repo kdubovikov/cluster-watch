@@ -80,4 +80,32 @@ final class SlurmParsingTests: XCTestCase {
         XCTAssertEqual(logPaths?.stderrPath, "/logs/%x-%j.err")
         XCTAssertEqual(logPaths?.workDirectory, "/workdir")
     }
+
+    func testParseScontrolLaunchDetailsExtractsCommandAndWorkingDirectory() {
+        let output = """
+        JobId=20001 JobName=train-model
+           UserId=test-user(1001) GroupId=test-group(1001) MCS_label=N/A
+           Command=/opt/jobs/run-train.sh --epochs 3 --config configs/train.yaml
+           WorkDir=/home/test-user/project
+        """
+
+        let details = SlurmParsing.parseScontrolLaunchDetails(output: output)
+
+        XCTAssertEqual(details?.commandText, "/opt/jobs/run-train.sh --epochs 3 --config configs/train.yaml")
+        XCTAssertEqual(details?.workDirectory, "/home/test-user/project")
+        XCTAssertNil(details?.batchScriptText)
+    }
+
+    func testParseBatchScriptReturnsMultilineScript() {
+        let output = """
+        #!/bin/bash
+        module load cuda
+        python train.py --config configs/train.yaml
+        """
+
+        XCTAssertEqual(
+            SlurmParsing.parseBatchScript(output: output),
+            "#!/bin/bash\nmodule load cuda\npython train.py --config configs/train.yaml"
+        )
+    }
 }

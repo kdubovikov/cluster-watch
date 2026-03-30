@@ -140,6 +140,87 @@ public struct JobLogPaths: Codable, Hashable, Sendable {
     }
 }
 
+public struct JobLaunchDetails: Codable, Hashable, Sendable {
+    public var commandText: String?
+    public var batchScriptText: String?
+    public var workDirectory: String?
+
+    public init(commandText: String? = nil, batchScriptText: String? = nil, workDirectory: String? = nil) {
+        self.commandText = commandText?.trimmedOrEmpty.nilIfEmpty
+        self.batchScriptText = batchScriptText?.trimmedOrEmpty.nilIfEmpty
+        self.workDirectory = workDirectory?.trimmedOrEmpty.nilIfEmpty
+    }
+
+    public var hasAnyContent: Bool {
+        commandText != nil || batchScriptText != nil
+    }
+
+    public var availableModes: [JobLaunchMode] {
+        JobLaunchMode.allCases.filter { content(for: $0) != nil }
+    }
+
+    public var preferredMode: JobLaunchMode {
+        if batchScriptText != nil {
+            return .batchScript
+        }
+        return .command
+    }
+
+    public func content(for mode: JobLaunchMode) -> String? {
+        switch mode {
+        case .command:
+            return commandText
+        case .batchScript:
+            return batchScriptText
+        }
+    }
+}
+
+public enum JobLaunchMode: String, Codable, CaseIterable, Hashable, Identifiable, Sendable {
+    case command
+    case batchScript
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .command:
+            return "Command"
+        case .batchScript:
+            return "Batch Script"
+        }
+    }
+}
+
+public struct JobLaunchSession: Hashable, Identifiable, Sendable {
+    public var clusterID: ClusterID
+    public var clusterName: String
+    public var jobID: String
+    public var jobName: String
+    public var details: JobLaunchDetails
+    public var preferredMode: JobLaunchMode
+
+    public init(
+        clusterID: ClusterID,
+        clusterName: String,
+        jobID: String,
+        jobName: String,
+        details: JobLaunchDetails,
+        preferredMode: JobLaunchMode
+    ) {
+        self.clusterID = clusterID
+        self.clusterName = clusterName
+        self.jobID = jobID
+        self.jobName = jobName
+        self.details = details
+        self.preferredMode = preferredMode
+    }
+
+    public var id: String {
+        "\(clusterID.rawValue):\(jobID)"
+    }
+}
+
 public enum JobLogStream: String, Codable, CaseIterable, Hashable, Identifiable, Sendable {
     case stdout
     case stderr

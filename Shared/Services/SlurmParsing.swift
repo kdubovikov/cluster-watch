@@ -48,6 +48,20 @@ public enum SlurmParsing {
         return logPaths.hasAnyPath || logPaths.workDirectory != nil ? logPaths : nil
     }
 
+    public static func parseScontrolLaunchDetails(output: String) -> JobLaunchDetails? {
+        let details = JobLaunchDetails(
+            commandText: lineFieldValue("Command", in: output),
+            workDirectory: fieldValue("WorkDir", in: output)
+        )
+
+        return details.hasAnyContent || details.workDirectory != nil ? details : nil
+    }
+
+    public static func parseBatchScript(output: String) -> String? {
+        let script = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return script.isEmpty ? nil : script
+    }
+
     private static func parseCurrentJobRow(_ row: String, clusterID: ClusterID) -> CurrentJob? {
         let parts = splitColumns(row, expectedCount: 9)
         guard parts.count == 9 else { return nil }
@@ -123,6 +137,27 @@ public enum SlurmParsing {
 
     private static func fieldValue(_ field: String, in output: String) -> String? {
         let pattern = "(?:^|\\s)\(NSRegularExpression.escapedPattern(for: field))=(\\S+)"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return nil
+        }
+
+        let range = NSRange(output.startIndex..<output.endIndex, in: output)
+        guard let match = regex.firstMatch(in: output, range: range),
+              match.numberOfRanges > 1,
+              let valueRange = Range(match.range(at: 1), in: output) else {
+            return nil
+        }
+
+        let value = String(output[valueRange]).trimmedOrEmpty
+        let lowercased = value.lowercased()
+        guard !value.isEmpty, lowercased != "(null)", lowercased != "none", lowercased != "n/a" else {
+            return nil
+        }
+        return value
+    }
+
+    private static func lineFieldValue(_ field: String, in output: String) -> String? {
+        let pattern = "(?:^|\\n)\\s*\(NSRegularExpression.escapedPattern(for: field))=([^\\n]*)"
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
             return nil
         }

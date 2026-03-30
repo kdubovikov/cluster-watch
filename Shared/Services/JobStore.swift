@@ -10,10 +10,12 @@ public final class JobStore {
     public var watchedJobs: [WatchedJob]
     public var browseSearchText: String = ""
     public var activeLogTail: JobLogTailSession?
+    public var activeLaunchCommand: JobLaunchSession?
 
     public private(set) var currentJobsByCluster: [ClusterID: [CurrentJob]]
     public private(set) var reachabilityByCluster: [ClusterID: ClusterReachabilityState]
     public private(set) var logPathsByJobKey: [String: JobLogPaths] = [:]
+    public private(set) var launchDetailsByJobKey: [String: JobLaunchDetails] = [:]
 
     @ObservationIgnored private let persistence: any PersistenceStoring
     @ObservationIgnored private let slurmClient: any SlurmClientProtocol
@@ -24,6 +26,7 @@ public final class JobStore {
     @ObservationIgnored private var bootstrapped = false
     @ObservationIgnored private var refreshingClusterIDs: Set<ClusterID> = []
     @ObservationIgnored private var fetchingLogPathJobKeys: Set<String> = []
+    @ObservationIgnored private var fetchingLaunchDetailsJobKeys: Set<String> = []
 
     public init(
         persistence: any PersistenceStoring,
@@ -206,6 +209,14 @@ public final class JobStore {
         logPathsByJobKey[jobKey(clusterID: job.clusterID, jobID: job.jobID)]
     }
 
+    public func launchDetails(for job: CurrentJob) -> JobLaunchDetails? {
+        launchDetailsByJobKey[jobKey(clusterID: job.clusterID, jobID: job.jobID)]
+    }
+
+    public func launchDetails(for job: WatchedJob) -> JobLaunchDetails? {
+        launchDetailsByJobKey[jobKey(clusterID: job.clusterID, jobID: job.jobID)]
+    }
+
     public func prefetchLogPaths(for job: CurrentJob) async {
         guard job.state != .pending else { return }
         await prefetchLogPaths(clusterID: job.clusterID, jobID: job.jobID)
@@ -254,8 +265,40 @@ public final class JobStore {
         return true
     }
 
+    public func prepareLaunchCommand(for job: CurrentJob) async -> Bool {
+        let details = await fetchLaunchDetails(clusterID: job.clusterID, jobID: job.jobID) ?? JobLaunchDetails()
+
+        activeLaunchCommand = JobLaunchSession(
+            clusterID: job.clusterID,
+            clusterName: clusterName(for: job.clusterID),
+            jobID: job.jobID,
+            jobName: job.jobName,
+            details: details,
+            preferredMode: details.preferredMode
+        )
+        return true
+    }
+
+    public func prepareLaunchCommand(for job: WatchedJob) async -> Bool {
+        let details = await fetchLaunchDetails(clusterID: job.clusterID, jobID: job.jobID) ?? JobLaunchDetails()
+
+        activeLaunchCommand = JobLaunchSession(
+            clusterID: job.clusterID,
+            clusterName: clusterName(for: job.clusterID),
+            jobID: job.jobID,
+            jobName: job.jobName,
+            details: details,
+            preferredMode: details.preferredMode
+        )
+        return true
+    }
+
     public func closeActiveLogTail() {
         activeLogTail = nil
+    }
+
+    public func closeActiveLaunchCommand() {
+        activeLaunchCommand = nil
     }
 
     public func tailLog(
@@ -396,6 +439,31 @@ public final class JobStore {
             }
         } catch {
             return
+        }
+    }
+
+    private func fetchLaunchDetails(clusterID: ClusterID, jobID: String) async -> JobLaunchDetails? {
+        let key = jobKey(clusterID: clusterID, jobID: jobID)
+        if let cached = launchDetailsByJobKey[key] {
+            return cached
+        }
+
+        guard !fetchingLaunchDetailsJobKeys.contains(key) else { return nil }
+        guard let cluster = clusters.first(where: { $0.id == clusterID }), cluster.isEnabled else { return nil }
+
+        fetchingLaunchDetailsJobKeys.insert(key)
+        defer { fetchingLaunchDetailsJobKeys.remove(key) }
+
+        do {
+            guard let details = try await slurmClient.fetchLaunchDetails(for: cluster, jobID: jobID),
+                  details.hasAnyContent else {
+                return nil
+            }
+
+            launchDetailsByJobKey[key] = details
+            return details
+        } catch {
+            return nil
         }
     }
 

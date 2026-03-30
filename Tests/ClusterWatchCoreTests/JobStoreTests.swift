@@ -425,6 +425,63 @@ final class JobStoreTests: XCTestCase {
         XCTAssertEqual(store.activeLogTail?.paths.stderrPath, "/logs/train-model-52001.err")
     }
 
+    func testPrepareLaunchCommandCreatesSessionPreferringBatchScript() async {
+        let watchedJob = WatchedJob(
+            clusterID: alphaClusterID,
+            jobID: "41001",
+            jobName: "prepare-data",
+            owner: "owner-a",
+            state: .running,
+            rawState: "RUNNING",
+            submitTime: Date(timeIntervalSince1970: 100),
+            startTime: Date(timeIntervalSince1970: 120),
+            endTime: nil,
+            elapsedSeconds: 30,
+            firstSeenAt: Date(timeIntervalSince1970: 100),
+            lastUpdatedAt: Date(timeIntervalSince1970: 120),
+            lastSuccessfulRefreshAt: Date(timeIntervalSince1970: 120),
+            isStale: false
+        )
+
+        let store = JobStore(
+            persistence: InMemoryPersistenceStore(),
+            slurmClient: MockSlurmClient(
+                currentResults: [:],
+                historicalResults: [:],
+                launchDetailsResults: [
+                    "cluster-alpha:41001": .success(
+                        JobLaunchDetails(
+                            commandText: "/opt/jobs/run-train.sh --epochs 3",
+                            batchScriptText: "#!/bin/bash\npython train.py --epochs 3",
+                            workDirectory: "/home/owner-a/project"
+                        )
+                    )
+                ]
+            ),
+            notificationManager: MockNotificationManager(),
+            pollingCoordinator: PollingCoordinator(),
+            nowProvider: { Date(timeIntervalSince1970: 500) },
+            initialState: PersistedAppState(
+                clusters: sampleClusters(),
+                globalUsernameFilter: "owner-a",
+                pollIntervalSeconds: 30,
+                watchedJobs: [watchedJob],
+                reachabilityByCluster: [:]
+            )
+        )
+
+        let opened = await store.prepareLaunchCommand(for: watchedJob)
+
+        XCTAssertTrue(opened)
+        XCTAssertEqual(store.activeLaunchCommand?.jobID, "41001")
+        XCTAssertEqual(store.activeLaunchCommand?.preferredMode, .batchScript)
+        XCTAssertEqual(store.activeLaunchCommand?.details.workDirectory, "/home/owner-a/project")
+        XCTAssertEqual(
+            store.activeLaunchCommand?.details.content(for: .batchScript),
+            "#!/bin/bash\npython train.py --epochs 3"
+        )
+    }
+
     private func sampleClusters() -> [ClusterConfig] {
         [
             ClusterConfig(id: alphaClusterID, displayName: "Cluster Alpha", sshAlias: "alpha-login"),
@@ -453,6 +510,7 @@ private actor MockSlurmClient: SlurmClientProtocol {
     private let currentResults: [ClusterID: Result<[CurrentJob], Error>]
     private let historicalResults: [String: Result<JobSnapshot?, Error>]
     private let logPathResults: [String: Result<JobLogPaths?, Error>]
+    private let launchDetailsResults: [String: Result<JobLaunchDetails?, Error>]
     private let tailResults: [String: Result<String, Error>]
     private let currentDelaysNanoseconds: [ClusterID: UInt64]
     private let historicalDelaysNanoseconds: [String: UInt64]
@@ -461,6 +519,7 @@ private actor MockSlurmClient: SlurmClientProtocol {
         currentResults: [ClusterID: Result<[CurrentJob], Error>],
         historicalResults: [String: Result<JobSnapshot?, Error>],
         logPathResults: [String: Result<JobLogPaths?, Error>] = [:],
+        launchDetailsResults: [String: Result<JobLaunchDetails?, Error>] = [:],
         tailResults: [String: Result<String, Error>] = [:],
         currentDelaysNanoseconds: [ClusterID: UInt64] = [:],
         historicalDelaysNanoseconds: [String: UInt64] = [:]
@@ -468,6 +527,7 @@ private actor MockSlurmClient: SlurmClientProtocol {
         self.currentResults = currentResults
         self.historicalResults = historicalResults
         self.logPathResults = logPathResults
+        self.launchDetailsResults = launchDetailsResults
         self.tailResults = tailResults
         self.currentDelaysNanoseconds = currentDelaysNanoseconds
         self.historicalDelaysNanoseconds = historicalDelaysNanoseconds
@@ -496,6 +556,13 @@ private actor MockSlurmClient: SlurmClientProtocol {
 
     func fetchLogPaths(for cluster: ClusterConfig, jobID: String) async throws -> JobLogPaths? {
         if let result = logPathResults["\(cluster.id.rawValue):\(jobID)"] {
+            return try result.get()
+        }
+        return nil
+    }
+
+    func fetchLaunchDetails(for cluster: ClusterConfig, jobID: String) async throws -> JobLaunchDetails? {
+        if let result = launchDetailsResults["\(cluster.id.rawValue):\(jobID)"] {
             return try result.get()
         }
         return nil

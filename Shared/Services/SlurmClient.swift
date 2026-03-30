@@ -4,6 +4,7 @@ public protocol SlurmClientProtocol: Sendable {
     func fetchCurrentJobs(for cluster: ClusterConfig, username: String) async throws -> [CurrentJob]
     func fetchHistoricalJob(for cluster: ClusterConfig, jobID: String) async throws -> JobSnapshot?
     func fetchLogPaths(for cluster: ClusterConfig, jobID: String) async throws -> JobLogPaths?
+    func fetchLaunchDetails(for cluster: ClusterConfig, jobID: String) async throws -> JobLaunchDetails?
     func tailLog(for cluster: ClusterConfig, remotePath: String, lineCount: Int) async throws -> String
 }
 
@@ -27,7 +28,7 @@ public enum SlurmClientError: LocalizedError, Equatable {
 public actor SlurmClient: SlurmClientProtocol {
     private let sshPath: String
     private let connectTimeoutSeconds: Int
-    private var inferredTimestampOffsetByCluster: [ClusterID: TimeInterval] = [:]
+    private var timestampOffsetByCluster: [ClusterID: TimeInterval] = [:]
 
     public init(sshPath: String = "/usr/bin/ssh", connectTimeoutSeconds: Int = 8) {
         self.sshPath = sshPath
@@ -42,13 +43,7 @@ public actor SlurmClient: SlurmClientProtocol {
         let remoteCommand = "squeue -h -u \(shellEscape(username)) -o '\(SlurmParsing.squeueFormat)'"
         let output = try await runSSH(destination: cluster.effectiveSSHDestination, remoteCommand: remoteCommand)
         let parsedJobs = SlurmParsing.parseCurrentJobs(output: output, clusterID: cluster.id)
-        let inferredOffset = Self.inferTimestampOffset(for: parsedJobs, now: Date())
-
-        if let inferredOffset {
-            inferredTimestampOffsetByCluster[cluster.id] = inferredOffset
-        }
-
-        let effectiveOffset = inferredOffset ?? inferredTimestampOffsetByCluster[cluster.id]
+        let effectiveOffset = await resolveTimestampOffset(for: cluster, jobs: parsedJobs, now: Date())
         return Self.applyingTimestampOffset(effectiveOffset, to: parsedJobs)
     }
 
@@ -60,7 +55,7 @@ public actor SlurmClient: SlurmClientProtocol {
         let remoteCommand = "sacct -n -P -j \(shellEscape(jobID)) --format=\(SlurmParsing.sacctFormat)"
         let output = try await runSSH(destination: cluster.effectiveSSHDestination, remoteCommand: remoteCommand)
         let snapshot = SlurmParsing.parseHistoricalJob(output: output, clusterID: cluster.id, requestedJobID: jobID)
-        return Self.applyingTimestampOffset(inferredTimestampOffsetByCluster[cluster.id], to: snapshot)
+        return Self.applyingTimestampOffset(timestampOffsetByCluster[cluster.id], to: snapshot)
     }
 
     public func fetchLogPaths(for cluster: ClusterConfig, jobID: String) async throws -> JobLogPaths? {
@@ -91,6 +86,39 @@ public actor SlurmClient: SlurmClientProtocol {
         }
 
         return nil
+    }
+
+    public func fetchLaunchDetails(for cluster: ClusterConfig, jobID: String) async throws -> JobLaunchDetails? {
+        guard !cluster.effectiveSSHDestination.isEmpty else {
+            throw SlurmClientError.invalidConfiguration("Missing SSH alias for \(cluster.displayName).")
+        }
+
+        var details = JobLaunchDetails()
+
+        do {
+            let scontrolOutput = try await runSSH(
+                destination: cluster.effectiveSSHDestination,
+                remoteCommand: "scontrol show job \(shellEscape(jobID))"
+            )
+            if let parsed = SlurmParsing.parseScontrolLaunchDetails(output: scontrolOutput) {
+                details.commandText = parsed.commandText
+                details.workDirectory = parsed.workDirectory
+            }
+        } catch {
+            // Fall through to batch script lookup; older jobs may no longer be available from the controller.
+        }
+
+        do {
+            let batchScriptOutput = try await runSSH(
+                destination: cluster.effectiveSSHDestination,
+                remoteCommand: "scontrol write batch_script \(shellEscape(jobID)) -"
+            )
+            details.batchScriptText = SlurmParsing.parseBatchScript(output: batchScriptOutput)
+        } catch {
+            // Not all job types expose a batch script, and completed jobs may be purged.
+        }
+
+        return details.hasAnyContent ? details : nil
     }
 
     public func tailLog(for cluster: ClusterConfig, remotePath: String, lineCount: Int) async throws -> String {
@@ -153,6 +181,33 @@ public actor SlurmClient: SlurmClientProtocol {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
+    private func resolveTimestampOffset(for cluster: ClusterConfig, jobs: [CurrentJob], now: Date) async -> TimeInterval? {
+        if let inferredOffset = Self.inferTimestampOffset(for: jobs, now: now) {
+            timestampOffsetByCluster[cluster.id] = inferredOffset
+            return inferredOffset
+        }
+
+        if let cachedOffset = timestampOffsetByCluster[cluster.id] {
+            return cachedOffset
+        }
+
+        guard let remoteOffset = try? await fetchRemoteTimeZoneOffset(for: cluster, now: now) else {
+            return nil
+        }
+
+        timestampOffsetByCluster[cluster.id] = remoteOffset
+        return remoteOffset
+    }
+
+    private func fetchRemoteTimeZoneOffset(for cluster: ClusterConfig, now: Date) async throws -> TimeInterval? {
+        let output = try await runSSH(
+            destination: cluster.effectiveSSHDestination,
+            remoteCommand: "date +%z"
+        )
+
+        return Self.timestampOffset(fromRemoteUTCOffset: output, now: now)
+    }
+
     private static func parseQueryError(_ stderr: String) -> String? {
         guard !stderr.isEmpty else { return nil }
 
@@ -188,6 +243,30 @@ public actor SlurmClient: SlurmClientProtocol {
 
         let sorted = candidates.sorted()
         return sorted[sorted.count / 2]
+    }
+
+    static func timestampOffset(
+        fromRemoteUTCOffset rawValue: String,
+        now: Date,
+        localTimeZone: TimeZone = .current
+    ) -> TimeInterval? {
+        let value = rawValue.trimmedOrEmpty
+        guard value.count == 5 else { return nil }
+
+        let signCharacter = value.first
+        guard signCharacter == "+" || signCharacter == "-" else { return nil }
+
+        let digits = value.dropFirst()
+        guard digits.count == 4,
+              let hours = Int(digits.prefix(2)),
+              let minutes = Int(digits.suffix(2)),
+              minutes < 60 else {
+            return nil
+        }
+
+        let remoteOffsetSeconds = ((hours * 3_600) + (minutes * 60)) * (signCharacter == "-" ? -1 : 1)
+        let localOffsetSeconds = localTimeZone.secondsFromGMT(for: now)
+        return TimeInterval(localOffsetSeconds - remoteOffsetSeconds)
     }
 
     private static func applyingTimestampOffset(_ offset: TimeInterval?, to jobs: [CurrentJob]) -> [CurrentJob] {

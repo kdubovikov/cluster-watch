@@ -5,6 +5,7 @@ struct ClusterWatchApp: App {
     private enum WindowID {
         static let settings = "settings"
         static let logTail = "log-tail"
+        static let launchCommand = "launch-command"
     }
 
     @State private var store: JobStore
@@ -37,6 +38,14 @@ struct ClusterWatchApp: App {
                 }
         }
         .defaultSize(width: 860, height: 560)
+
+        Window("Launch Command", id: WindowID.launchCommand) {
+            JobLaunchCommandWindowView(store: store)
+                .task {
+                    await store.bootstrap()
+                }
+        }
+        .defaultSize(width: 900, height: 620)
     }
 }
 
@@ -238,5 +247,122 @@ private struct JobLogTailWindowView: View {
             guard !Task.isCancelled else { return }
             errorText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
+    }
+}
+
+private struct JobLaunchCommandWindowView: View {
+    @Bindable var store: JobStore
+    @State private var selectedMode: JobLaunchMode = .command
+    @State private var wrapsLines = true
+
+    var body: some View {
+        Group {
+            if let session = store.activeLaunchCommand {
+                content(for: session)
+                    .task(id: session.id) {
+                        selectedMode = session.preferredMode
+                        wrapsLines = true
+                    }
+            } else {
+                ContentUnavailableView(
+                    "No Command Selected",
+                    systemImage: "chevron.left.forwardslash.chevron.right",
+                    description: Text("Choose the command action on a job row to inspect its launch command or batch script here.")
+                )
+                .padding(24)
+            }
+        }
+        .frame(minWidth: 820, minHeight: 520)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func content(for session: JobLaunchSession) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(session.jobName)
+                        .font(.system(.title3, design: .rounded, weight: .semibold))
+                    Text("\(session.clusterName) • #\(session.jobID)")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 12)
+
+                if session.details.availableModes.count > 1 {
+                    Picker("Content", selection: $selectedMode) {
+                        ForEach(session.details.availableModes) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 220)
+                }
+
+                Toggle("Wrap", isOn: $wrapsLines)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+
+                Button(isDisplayingFormattedContent(for: session) ? "Copy Raw" : "Copy") {
+                    copyToPasteboard(text: rawContent(for: session))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(rawContent(for: session).isEmpty)
+            }
+
+            if let workDirectory = session.details.workDirectory {
+                Text("Working directory: \(workDirectory)")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+
+            if isDisplayingFormattedContent(for: session) {
+                Text("Displayed with best-effort shell wrapping for readability.")
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+
+            ScrollView(wrapsLines ? .vertical : [.vertical, .horizontal]) {
+                Text(verbatim: displayedContent(for: session).isEmpty ? "No launch command details available for this job." : displayedContent(for: session))
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: wrapsLines ? .infinity : nil, alignment: .topLeading)
+                    .fixedSize(horizontal: !wrapsLines, vertical: true)
+                    .padding(12)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.primary.opacity(0.05))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .padding(16)
+    }
+
+    private func displayedContent(for session: JobLaunchSession) -> String {
+        let raw = rawContent(for: session)
+        guard !raw.isEmpty else { return "" }
+        return JobFormatting.formattedLaunchContent(raw, mode: selectedMode)
+    }
+
+    private func rawContent(for session: JobLaunchSession) -> String {
+        session.details.content(for: selectedMode) ?? ""
+    }
+
+    private func isDisplayingFormattedContent(for session: JobLaunchSession) -> Bool {
+        let raw = rawContent(for: session)
+        guard !raw.isEmpty else { return false }
+        return displayedContent(for: session) != raw
+    }
+
+    private func copyToPasteboard(text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
     }
 }
