@@ -36,6 +36,7 @@ final class JobStoreTests: XCTestCase {
             persistence: persistence,
             slurmClient: client,
             notificationManager: notifications,
+            pollingCoordinator: PollingCoordinator(),
             nowProvider: { Date(timeIntervalSince1970: 300) },
             initialState: PersistedAppState(
                 clusters: sampleClusters(),
@@ -50,8 +51,8 @@ final class JobStoreTests: XCTestCase {
 
         XCTAssertEqual(store.watchedJobs.count, 1)
         XCTAssertTrue(store.watchedJobs[0].isStale)
-        XCTAssertEqual(store.watchedJobs[0].state, .running)
-        XCTAssertEqual(store.reachability(for: alphaClusterID).status, .unreachable)
+        XCTAssertEqual(store.watchedJobs[0].state, NormalizedJobState.running)
+        XCTAssertEqual(store.reachability(for: alphaClusterID).status, ClusterReachabilityState.Status.unreachable)
     }
 
     func testTerminalTransitionSendsNotificationOnlyOnce() async {
@@ -95,6 +96,7 @@ final class JobStoreTests: XCTestCase {
             persistence: persistence,
             slurmClient: client,
             notificationManager: notifications,
+            pollingCoordinator: PollingCoordinator(),
             nowProvider: { Date(timeIntervalSince1970: 500) },
             initialState: PersistedAppState(
                 clusters: sampleClusters(),
@@ -108,7 +110,7 @@ final class JobStoreTests: XCTestCase {
         await store.refreshCluster(id: alphaClusterID)
         await store.refreshCluster(id: alphaClusterID)
 
-        XCTAssertEqual(store.watchedJobs[0].state, .completed)
+        XCTAssertEqual(store.watchedJobs[0].state, NormalizedJobState.completed)
         XCTAssertTrue(store.watchedJobs[0].notificationSent)
         XCTAssertEqual(notifications.sentJobIDs, ["12345"])
     }
@@ -151,6 +153,7 @@ final class JobStoreTests: XCTestCase {
                 historicalResults: [:]
             ),
             notificationManager: MockNotificationManager(),
+            pollingCoordinator: PollingCoordinator(),
             nowProvider: { Date(timeIntervalSince1970: 260) },
             initialState: PersistedAppState(
                 clusters: sampleClusters(),
@@ -163,7 +166,7 @@ final class JobStoreTests: XCTestCase {
 
         await store.refreshCluster(id: alphaClusterID)
 
-        XCTAssertEqual(store.watchedJobs[0].state, .completed)
+        XCTAssertEqual(store.watchedJobs[0].state, NormalizedJobState.completed)
         XCTAssertEqual(store.watchedJobs[0].rawState, "COMPLETED")
         XCTAssertEqual(store.watchedJobs[0].endTime, Date(timeIntervalSince1970: 200))
         XCTAssertEqual(store.watchedJobs[0].lastSuccessfulRefreshAt, Date(timeIntervalSince1970: 260))
@@ -195,6 +198,7 @@ final class JobStoreTests: XCTestCase {
                 historicalResults: ["cluster-beta:999": .success(nil)]
             ),
             notificationManager: MockNotificationManager(),
+            pollingCoordinator: PollingCoordinator(),
             nowProvider: { Date(timeIntervalSince1970: 500) },
             initialState: PersistedAppState(
                 clusters: sampleClusters(),
@@ -207,12 +211,12 @@ final class JobStoreTests: XCTestCase {
 
         await store.refreshCluster(id: betaClusterID)
 
-        XCTAssertEqual(store.watchedJobs[0].state, .pending)
+        XCTAssertEqual(store.watchedJobs[0].state, NormalizedJobState.pending)
         XCTAssertFalse(store.watchedJobs[0].isStale)
         XCTAssertEqual(store.watchedJobs[0].lastUpdatedAt, Date(timeIntervalSince1970: 120))
     }
 
-    func testConcurrentClusterRefreshesDoNotOverwriteOtherClusterUpdates() async {
+    func testConcurrentClusterRefreshesDoNotOverwriteOtherClusterUpdates() async throws {
         let alphaJob = WatchedJob(
             clusterID: alphaClusterID,
             jobID: "41001",
@@ -286,6 +290,7 @@ final class JobStoreTests: XCTestCase {
                 ]
             ),
             notificationManager: MockNotificationManager(),
+            pollingCoordinator: PollingCoordinator(),
             nowProvider: { Date(timeIntervalSince1970: 250) },
             initialState: PersistedAppState(
                 clusters: sampleClusters(),
@@ -296,16 +301,16 @@ final class JobStoreTests: XCTestCase {
             )
         )
 
-        async let alphaRefresh: Void = store.refreshCluster(id: alphaClusterID)
-        async let betaRefresh: Void = store.refreshCluster(id: betaClusterID)
-        _ = await (alphaRefresh, betaRefresh)
+        let alphaRefresh = Task { await store.refreshCluster(id: alphaClusterID) }
+        let betaRefresh = Task { await store.refreshCluster(id: betaClusterID) }
+        _ = await (alphaRefresh.value, betaRefresh.value)
 
         let refreshedAlphaJob = try XCTUnwrap(store.watchedJobs.first { $0.jobID == "41001" })
-        XCTAssertEqual(refreshedAlphaJob.state, .completed)
+        XCTAssertEqual(refreshedAlphaJob.state, NormalizedJobState.completed)
         XCTAssertTrue(refreshedAlphaJob.notificationSent)
 
         let refreshedBetaJob = try XCTUnwrap(store.watchedJobs.first { $0.jobID == "52001" })
-        XCTAssertEqual(refreshedBetaJob.state, .running)
+        XCTAssertEqual(refreshedBetaJob.state, NormalizedJobState.running)
         XCTAssertEqual(refreshedBetaJob.rawState, "RUNNING")
         XCTAssertEqual(refreshedBetaJob.startTime, Date(timeIntervalSince1970: 120))
     }
@@ -353,6 +358,7 @@ final class JobStoreTests: XCTestCase {
             persistence: InMemoryPersistenceStore(),
             slurmClient: MockSlurmClient(currentResults: [:], historicalResults: [:]),
             notificationManager: MockNotificationManager(),
+            pollingCoordinator: PollingCoordinator(),
             nowProvider: { Date(timeIntervalSince1970: 500) },
             initialState: PersistedAppState(
                 clusters: sampleClusters(),
@@ -363,8 +369,8 @@ final class JobStoreTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(store.watchedDependencies(for: dependentJob).map(\.jobID), ["12345"])
-        XCTAssertEqual(store.watchedDependents(for: dependencyJob).map(\.jobID), ["22300"])
+        XCTAssertEqual(store.watchedDependencies(for: dependentJob).map { $0.jobID }, ["12345"])
+        XCTAssertEqual(store.watchedDependents(for: dependencyJob).map { $0.jobID }, ["22300"])
     }
 
     func testPrepareLogTailCreatesSessionForDetectedStdoutPath() async {
@@ -400,6 +406,7 @@ final class JobStoreTests: XCTestCase {
                 ]
             ),
             notificationManager: MockNotificationManager(),
+            pollingCoordinator: PollingCoordinator(),
             nowProvider: { Date(timeIntervalSince1970: 500) },
             initialState: PersistedAppState(
                 clusters: sampleClusters(),

@@ -8,7 +8,8 @@ final class GroupedJobsViewModelTests: XCTestCase {
 
     func testBucketsAndOrderingPreferRunningThenRecent() {
         let calendar = Calendar(identifier: .gregorian)
-        let referenceDate = calendar.date(from: DateComponents(year: 2026, month: 3, day: 27, hour: 12, minute: 0))!
+        let startOfToday = calendar.startOfDay(for: Date())
+        let referenceDate = calendar.date(byAdding: .hour, value: 12, to: startOfToday)!
 
         let runningJob = WatchedJob(
             clusterID: alphaClusterID,
@@ -36,10 +37,10 @@ final class GroupedJobsViewModelTests: XCTestCase {
             rawState: "COMPLETED",
             submitTime: calendar.date(byAdding: .day, value: -1, to: referenceDate),
             startTime: calendar.date(byAdding: .day, value: -1, to: referenceDate),
-            endTime: calendar.date(byAdding: .hour, value: -20, to: referenceDate),
+            endTime: calendar.date(byAdding: .hour, value: -23, to: referenceDate),
             elapsedSeconds: 1_200,
             firstSeenAt: calendar.date(byAdding: .day, value: -1, to: referenceDate)!,
-            lastUpdatedAt: calendar.date(byAdding: .hour, value: -20, to: referenceDate)!,
+            lastUpdatedAt: calendar.date(byAdding: .hour, value: -23, to: referenceDate)!,
             lastSuccessfulRefreshAt: referenceDate,
             isStale: false
         )

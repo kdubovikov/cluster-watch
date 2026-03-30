@@ -25,9 +25,9 @@ final class SlurmParsingTests: XCTestCase {
 
     func testParseHistoricalJobPrefersPrimaryRowOverSteps() {
         let output = """
-        12345|test-user|COMPLETED|train-model|2026-03-27T09:00:00|2026-03-27T09:10:00|2026-03-27T11:00:00|01:50:00
-        12345.batch|test-user|COMPLETED|batch|2026-03-27T09:00:00|2026-03-27T09:10:00|2026-03-27T11:00:00|01:50:00
-        12345.extern|test-user|COMPLETED|extern|2026-03-27T09:00:00|2026-03-27T09:10:00|2026-03-27T11:00:00|01:50:00
+        12345|test-user|COMPLETED|train-model|2026-03-27T09:00:00|2026-03-27T09:10:00|2026-03-27T11:00:00|01:50:00|None
+        12345.batch|test-user|COMPLETED|batch|2026-03-27T09:00:00|2026-03-27T09:10:00|2026-03-27T11:00:00|01:50:00|None
+        12345.extern|test-user|COMPLETED|extern|2026-03-27T09:00:00|2026-03-27T09:10:00|2026-03-27T11:00:00|01:50:00|None
         """
 
         let snapshot = SlurmParsing.parseHistoricalJob(output: output, clusterID: alphaClusterID, requestedJobID: "12345")

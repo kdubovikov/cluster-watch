@@ -9,18 +9,17 @@ public protocol NotificationManaging: AnyObject {
 
 @MainActor
 public final class NotificationManager: NSObject, NotificationManaging, UNUserNotificationCenterDelegate {
-    private let center: UNUserNotificationCenter
     private var requestedAuthorization = false
 
     public init(center: UNUserNotificationCenter = .current()) {
-        self.center = center
         super.init()
-        self.center.delegate = self
+        center.delegate = self
     }
 
     public func requestAuthorizationIfNeeded() async {
         guard !requestedAuthorization else { return }
         requestedAuthorization = true
+        let center = UNUserNotificationCenter.current()
         _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
     }
 
@@ -38,6 +37,7 @@ public final class NotificationManager: NSObject, NotificationManaging, UNUserNo
             trigger: nil
         )
 
+        let center = UNUserNotificationCenter.current()
         try? await center.add(request)
     }
 
