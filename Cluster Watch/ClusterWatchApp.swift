@@ -52,6 +52,7 @@ struct ClusterWatchApp: App {
 private struct JobLogTailWindowView: View {
     @Bindable var store: JobStore
     @State private var selectedStream: JobLogStream = .stdout
+    @State private var lineCount: Int = 200
     @State private var logText: String = ""
     @State private var errorText: String?
     @State private var lastLoadedAt: Date?
@@ -100,6 +101,16 @@ private struct JobLogTailWindowView: View {
                     }
                     .pickerStyle(.segmented)
                     .frame(width: 180)
+                }
+
+                HStack(spacing: 6) {
+                    Text("Lines")
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(.secondary)
+
+                    TextField("200", value: lineCountBinding, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 64)
                 }
 
                 Button("Refresh") {
@@ -190,6 +201,15 @@ private struct JobLogTailWindowView: View {
         logText.isEmpty ? "No log output yet." : logText
     }
 
+    private var lineCountBinding: Binding<Int> {
+        Binding(
+            get: { lineCount },
+            set: { newValue in
+                lineCount = max(1, min(10_000, newValue))
+            }
+        )
+    }
+
     private func taskID(for session: JobLogTailSession, stream: JobLogStream? = nil) -> String {
         "\(session.clusterID.rawValue):\(session.jobID):\((stream ?? selectedStream).rawValue)"
     }
@@ -232,7 +252,7 @@ private struct JobLogTailWindowView: View {
         defer { isLoading = false }
 
         do {
-            let output = try await store.tailLog(session: session, stream: stream, lineCount: 200)
+            let output = try await store.tailLog(session: session, stream: stream, lineCount: lineCount)
             guard !Task.isCancelled else { return }
             logText = output
             errorText = nil

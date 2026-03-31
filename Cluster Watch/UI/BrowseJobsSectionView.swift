@@ -345,9 +345,16 @@ private struct BrowseJobRowView: View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {
-                    Text(job.jobName)
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .lineLimit(1)
+                    Button {
+                        copyToPasteboard(job.jobName)
+                    } label: {
+                        Text(job.jobName)
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy job name")
                     StateBadgeView(title: job.state.badgeTitle, style: job.state.badgeStyle)
                     if job.dependencyStatus == .waiting {
                         StateBadgeView(title: "Blocked", style: .pending)
@@ -357,9 +364,20 @@ private struct BrowseJobRowView: View {
                     }
                 }
 
-                Text("\(clusterName) • #\(job.jobID) • \(job.owner)")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 0) {
+                    Text("\(clusterName) • ")
+                    Button {
+                        copyToPasteboard(job.jobID)
+                    } label: {
+                        Text("#\(job.jobID)")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy job ID")
+                    Text(" • \(job.owner)")
+                }
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
                 Text("\(JobFormatting.startedText(for: job)) • \(JobFormatting.timingSummary(for: job, now: now))")
                     .font(.system(size: 11, weight: .regular, design: .rounded))
                     .foregroundStyle(.secondary)
@@ -423,6 +441,12 @@ private struct BrowseJobRowView: View {
         (displayStyle.isChain ? 6 : 8) + reservedTrailingInset
     }
 
+    private func copyToPasteboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
     @ViewBuilder
     private var actionButton: some View {
         if displayStyle.isChain {
@@ -473,9 +497,10 @@ private struct BrowseJobRowView: View {
                     Button {
                         tailAction()
                     } label: {
-                        Label("Tail", systemImage: "doc.text.magnifyingglass")
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .accessibilityLabel("Tail log")
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderless)
                     .controlSize(.small)
                 }
 

@@ -40,9 +40,16 @@ struct WatchedJobRowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(job.jobName)
-                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                    .lineLimit(1)
+                Button {
+                    copyToPasteboard(job.jobName)
+                } label: {
+                    Text(job.jobName)
+                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+                .help("Copy job name")
 
                 Spacer(minLength: 8)
 
@@ -60,9 +67,19 @@ struct WatchedJobRowView: View {
                 }
             }
 
-            Text("\(clusterName) • #\(job.jobID)")
-                .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(.secondary)
+            HStack(spacing: 0) {
+                Text("\(clusterName) • ")
+                Button {
+                    copyToPasteboard(job.jobID)
+                } label: {
+                    Text("#\(job.jobID)")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Copy job ID")
+            }
+            .font(.system(size: 12, weight: .medium, design: .rounded))
+            .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(compactTimingLine)
@@ -114,12 +131,8 @@ struct WatchedJobRowView: View {
                     Button {
                         tailAction()
                     } label: {
-                        if displayStyle.isChain {
-                            Image(systemName: "doc.text.magnifyingglass")
-                                .accessibilityLabel("Tail log")
-                        } else {
-                            Label("Tail", systemImage: "doc.text.magnifyingglass")
-                        }
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .accessibilityLabel("Tail log")
                     }
                     .buttonStyle(.borderless)
                     .controlSize(.small)
@@ -189,6 +202,12 @@ struct WatchedJobRowView: View {
 
     private var trailingInset: CGFloat {
         (displayStyle.isChain ? 6 : 10) + reservedTrailingInset
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
     }
 
     @ViewBuilder
