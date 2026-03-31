@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import UserNotifications
 
 @MainActor
@@ -46,5 +47,39 @@ public final class NotificationManager: NSObject, NotificationManaging, UNUserNo
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         [.banner, .list, .sound]
+    }
+
+    nonisolated public func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else {
+            return
+        }
+
+        let text = Self.notificationClipboardText(from: response.notification.request.content)
+        guard !text.isEmpty else { return }
+
+        await MainActor.run {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+        }
+    }
+
+    nonisolated private static func notificationClipboardText(from content: UNNotificationContent) -> String {
+        let title = content.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = content.body.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        switch (title.isEmpty, body.isEmpty) {
+        case (false, false):
+            return "\(title)\n\(body)"
+        case (false, true):
+            return title
+        case (true, false):
+            return body
+        case (true, true):
+            return ""
+        }
     }
 }
