@@ -48,6 +48,7 @@ struct MenuBarRootView: View {
                                     openWindow(id: "launch-command")
                                 }
                             )
+                            ClusterLoadSectionView(store: store)
                         }
                     }
                 }

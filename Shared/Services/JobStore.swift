@@ -14,6 +14,7 @@ public final class JobStore {
 
     public private(set) var currentJobsByCluster: [ClusterID: [CurrentJob]]
     public private(set) var reachabilityByCluster: [ClusterID: ClusterReachabilityState]
+    public private(set) var clusterLoadByCluster: [ClusterID: ClusterLoadSnapshot]
     public private(set) var logPathsByJobKey: [String: JobLogPaths] = [:]
     public private(set) var launchDetailsByJobKey: [String: JobLaunchDetails] = [:]
 
@@ -54,6 +55,7 @@ public final class JobStore {
         self.watchedJobs = initialState.watchedJobs
         self.currentJobsByCluster = Self.emptyCurrentJobs(for: normalizedClusters)
         self.reachabilityByCluster = normalizedReachability
+        self.clusterLoadByCluster = Self.emptyClusterLoad(for: normalizedClusters)
     }
 
     public convenience init(initialState: PersistedAppState = PersistedAppState.defaultState()) {
@@ -106,6 +108,7 @@ public final class JobStore {
             from: persisted.reachabilityByCluster,
             clusterIDs: clusters.map(\.id)
         )
+        clusterLoadByCluster = Self.emptyClusterLoad(for: clusters)
     }
 
     public func start() {
@@ -137,6 +140,10 @@ public final class JobStore {
         self.currentJobsByCluster = Self.normalizedCurrentJobs(from: currentJobsByCluster, clusterIDs: self.clusters.map(\.id))
         self.reachabilityByCluster = Self.normalizedReachability(
             from: Dictionary(uniqueKeysWithValues: reachabilityByCluster.map { ($0.key.rawValue, $0.value) }),
+            clusterIDs: self.clusters.map(\.id)
+        )
+        self.clusterLoadByCluster = Self.normalizedClusterLoad(
+            from: clusterLoadByCluster,
             clusterIDs: self.clusters.map(\.id)
         )
         configurePolling()
@@ -391,6 +398,7 @@ public final class JobStore {
             state.lastErrorMessage = nil
             reachabilityByCluster[id] = state
 
+            await refreshClusterLoad(for: cluster, username: username, currentJobs: currentJobs, refreshedAt: refreshedAt)
             await reconcileWatchedJobs(for: cluster, currentJobs: currentJobs, refreshedAt: refreshedAt)
         } catch let error as SlurmClientError {
             switch error {
@@ -399,12 +407,20 @@ public final class JobStore {
                 state.status = .reachable
                 state.lastErrorMessage = message
                 reachabilityByCluster[id] = state
+                clusterLoadByCluster[id] = ClusterLoadSnapshot.unknown(
+                    message: message,
+                    lastUpdatedAt: clusterLoadByCluster[id]?.lastUpdatedAt
+                )
             case .invalidConfiguration, .commandFailed:
                 currentJobsByCluster[id] = []
 
                 state.status = .unreachable
                 state.lastErrorMessage = error.localizedDescription
                 reachabilityByCluster[id] = state
+                clusterLoadByCluster[id] = ClusterLoadSnapshot.unknown(
+                    message: error.localizedDescription,
+                    lastUpdatedAt: clusterLoadByCluster[id]?.lastUpdatedAt
+                )
 
                 markClusterJobsStale(clusterID: id)
             }
@@ -414,6 +430,10 @@ public final class JobStore {
             state.status = .unreachable
             state.lastErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             reachabilityByCluster[id] = state
+            clusterLoadByCluster[id] = ClusterLoadSnapshot.unknown(
+                message: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
+                lastUpdatedAt: clusterLoadByCluster[id]?.lastUpdatedAt
+            )
 
             markClusterJobsStale(clusterID: id)
         }
@@ -421,6 +441,10 @@ public final class JobStore {
 
     public func reachability(for clusterID: ClusterID) -> ClusterReachabilityState {
         reachabilityByCluster[clusterID] ?? ClusterReachabilityState()
+    }
+
+    public func clusterLoad(for clusterID: ClusterID) -> ClusterLoadSnapshot {
+        clusterLoadByCluster[clusterID] ?? ClusterLoadSnapshot.unknown()
     }
 
     private func prefetchLogPaths(clusterID: ClusterID, jobID: String) async {
@@ -549,6 +573,26 @@ public final class JobStore {
         return nil
     }
 
+    private func refreshClusterLoad(
+        for cluster: ClusterConfig,
+        username: String,
+        currentJobs: [CurrentJob],
+        refreshedAt: Date
+    ) async {
+        do {
+            clusterLoadByCluster[cluster.id] = try await slurmClient.fetchClusterLoad(
+                for: cluster,
+                username: username,
+                currentJobs: currentJobs
+            )
+        } catch {
+            clusterLoadByCluster[cluster.id] = ClusterLoadSnapshot.unknown(
+                message: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
+                lastUpdatedAt: refreshedAt
+            )
+        }
+    }
+
     private func jobKey(clusterID: ClusterID, jobID: String) -> String {
         "\(clusterID.rawValue):\(jobID)"
     }
@@ -593,8 +637,19 @@ public final class JobStore {
         Dictionary(uniqueKeysWithValues: clusters.map { ($0.id, []) })
     }
 
+    private static func emptyClusterLoad(for clusters: [ClusterConfig]) -> [ClusterID: ClusterLoadSnapshot] {
+        Dictionary(uniqueKeysWithValues: clusters.map { ($0.id, ClusterLoadSnapshot.unknown()) })
+    }
+
     private static func normalizedCurrentJobs(from existingJobs: [ClusterID: [CurrentJob]], clusterIDs: [ClusterID]) -> [ClusterID: [CurrentJob]] {
         Dictionary(uniqueKeysWithValues: clusterIDs.map { ($0, existingJobs[$0] ?? []) })
+    }
+
+    private static func normalizedClusterLoad(
+        from existingLoad: [ClusterID: ClusterLoadSnapshot],
+        clusterIDs: [ClusterID]
+    ) -> [ClusterID: ClusterLoadSnapshot] {
+        Dictionary(uniqueKeysWithValues: clusterIDs.map { ($0, existingLoad[$0] ?? ClusterLoadSnapshot.unknown()) })
     }
 
     private static func normalizedReachability(

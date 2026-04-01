@@ -6,8 +6,8 @@ final class SlurmParsingTests: XCTestCase {
 
     func testParseCurrentJobsExtractsTimingFields() {
         let output = """
-        12345|test-user|RUNNING|train-model|2026-03-27T09:00:00|2026-03-27T09:10:00|01:25:00|NULL|None
-        12346|test-user|PENDING|prepare-data|2026-03-27T10:00:00|N/A|00:15:00|afterok:12345|Dependency
+        12345|test-user|RUNNING|train-model|2026-03-27T09:00:00|2026-03-27T09:10:00|01:25:00|NULL|None|normal|gres/gpu:4
+        12346|test-user|PENDING|prepare-data|2026-03-27T10:00:00|N/A|00:15:00|afterok:12345|Dependency|short|gres/gpu:2
         """
 
         let jobs = SlurmParsing.parseCurrentJobs(output: output, clusterID: alphaClusterID)
@@ -16,11 +16,15 @@ final class SlurmParsingTests: XCTestCase {
         XCTAssertEqual(jobs[0].jobID, "12345")
         XCTAssertEqual(jobs[0].state, .running)
         XCTAssertEqual(jobs[0].elapsedSeconds, 5_100)
+        XCTAssertEqual(jobs[0].qosName, "normal")
+        XCTAssertEqual(jobs[0].gpuCount, 4)
         XCTAssertEqual(jobs[1].state, .pending)
         XCTAssertNil(jobs[1].startTime)
         XCTAssertEqual(jobs[1].dependencyExpression, "afterok:12345")
         XCTAssertEqual(jobs[1].dependencyJobIDs, ["12345"])
         XCTAssertEqual(jobs[1].dependencyStatus, .waiting)
+        XCTAssertEqual(jobs[1].qosName, "short")
+        XCTAssertEqual(jobs[1].gpuCount, 2)
     }
 
     func testParseHistoricalJobPrefersPrimaryRowOverSteps() {

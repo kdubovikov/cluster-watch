@@ -216,6 +216,79 @@ final class JobStoreTests: XCTestCase {
         XCTAssertEqual(store.watchedJobs[0].lastUpdatedAt, Date(timeIntervalSince1970: 120))
     }
 
+    func testSuccessfulRefreshPublishesClusterLoadSnapshot() async {
+        let currentJob = CurrentJob(
+            clusterID: alphaClusterID,
+            jobID: "123",
+            jobName: "queue-check",
+            owner: "test-user",
+            state: .running,
+            rawState: "RUNNING"
+        )
+
+        let expectedLoad = ClusterLoadSnapshot(
+            level: .busy,
+            jobCount: 12,
+            pendingJobCount: 4,
+            freeGPUCount: 8,
+            totalGPUCount: 64,
+            jobHeadroom: 4,
+            accessiblePartitions: ["gpu"],
+            lastUpdatedAt: Date(timeIntervalSince1970: 300)
+        )
+
+        let store = JobStore(
+            persistence: InMemoryPersistenceStore(),
+            slurmClient: MockSlurmClient(
+                currentResults: [alphaClusterID: .success([currentJob])],
+                historicalResults: [:],
+                clusterLoadResults: [alphaClusterID: .success(expectedLoad)]
+            ),
+            notificationManager: MockNotificationManager(),
+            pollingCoordinator: PollingCoordinator(),
+            nowProvider: { Date(timeIntervalSince1970: 300) },
+            initialState: PersistedAppState(
+                clusters: sampleClusters(),
+                globalUsernameFilter: "test-user",
+                pollIntervalSeconds: 30,
+                watchedJobs: [],
+                reachabilityByCluster: [:]
+            )
+        )
+
+        await store.refreshCluster(id: alphaClusterID)
+
+        XCTAssertEqual(store.clusterLoad(for: alphaClusterID), expectedLoad)
+        XCTAssertEqual(store.reachability(for: alphaClusterID).status, .reachable)
+    }
+
+    func testClusterLoadFailureDoesNotMarkReachableClusterDown() async {
+        let store = JobStore(
+            persistence: InMemoryPersistenceStore(),
+            slurmClient: MockSlurmClient(
+                currentResults: [alphaClusterID: .success([])],
+                historicalResults: [:],
+                clusterLoadResults: [alphaClusterID: .failure(SlurmClientError.commandFailed("sacctmgr timeout"))]
+            ),
+            notificationManager: MockNotificationManager(),
+            pollingCoordinator: PollingCoordinator(),
+            nowProvider: { Date(timeIntervalSince1970: 300) },
+            initialState: PersistedAppState(
+                clusters: sampleClusters(),
+                globalUsernameFilter: "test-user",
+                pollIntervalSeconds: 30,
+                watchedJobs: [],
+                reachabilityByCluster: [:]
+            )
+        )
+
+        await store.refreshCluster(id: alphaClusterID)
+
+        XCTAssertEqual(store.reachability(for: alphaClusterID).status, .reachable)
+        XCTAssertEqual(store.clusterLoad(for: alphaClusterID).level, .unknown)
+        XCTAssertEqual(store.clusterLoad(for: alphaClusterID).message, "sacctmgr timeout")
+    }
+
     func testConcurrentClusterRefreshesDoNotOverwriteOtherClusterUpdates() async throws {
         let alphaJob = WatchedJob(
             clusterID: alphaClusterID,
@@ -509,6 +582,7 @@ private actor InMemoryPersistenceStore: PersistenceStoring {
 private actor MockSlurmClient: SlurmClientProtocol {
     private let currentResults: [ClusterID: Result<[CurrentJob], Error>]
     private let historicalResults: [String: Result<JobSnapshot?, Error>]
+    private let clusterLoadResults: [ClusterID: Result<ClusterLoadSnapshot, Error>]
     private let logPathResults: [String: Result<JobLogPaths?, Error>]
     private let launchDetailsResults: [String: Result<JobLaunchDetails?, Error>]
     private let tailResults: [String: Result<String, Error>]
@@ -518,6 +592,7 @@ private actor MockSlurmClient: SlurmClientProtocol {
     init(
         currentResults: [ClusterID: Result<[CurrentJob], Error>],
         historicalResults: [String: Result<JobSnapshot?, Error>],
+        clusterLoadResults: [ClusterID: Result<ClusterLoadSnapshot, Error>] = [:],
         logPathResults: [String: Result<JobLogPaths?, Error>] = [:],
         launchDetailsResults: [String: Result<JobLaunchDetails?, Error>] = [:],
         tailResults: [String: Result<String, Error>] = [:],
@@ -526,6 +601,7 @@ private actor MockSlurmClient: SlurmClientProtocol {
     ) {
         self.currentResults = currentResults
         self.historicalResults = historicalResults
+        self.clusterLoadResults = clusterLoadResults
         self.logPathResults = logPathResults
         self.launchDetailsResults = launchDetailsResults
         self.tailResults = tailResults
@@ -552,6 +628,13 @@ private actor MockSlurmClient: SlurmClientProtocol {
             return try result.get()
         }
         return nil
+    }
+
+    func fetchClusterLoad(for cluster: ClusterConfig, username: String, currentJobs: [CurrentJob]) async throws -> ClusterLoadSnapshot {
+        if let result = clusterLoadResults[cluster.id] {
+            return try result.get()
+        }
+        return .unknown()
     }
 
     func fetchLogPaths(for cluster: ClusterConfig, jobID: String) async throws -> JobLogPaths? {

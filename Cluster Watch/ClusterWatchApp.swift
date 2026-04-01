@@ -11,39 +11,32 @@ struct ClusterWatchApp: App {
     @State private var store: JobStore
 
     init() {
-        _store = State(initialValue: JobStore())
+        let store = JobStore()
+        _store = State(initialValue: store)
+
+        Task {
+            await store.bootstrap()
+        }
     }
 
     var body: some Scene {
         MenuBarExtra("Cluster Watch", systemImage: "dot.scope.display") {
             MenuBarRootView(store: store)
-                .task {
-                    await store.bootstrap()
-                }
         }
         .menuBarExtraStyle(.window)
 
         Window("Cluster Watch Settings", id: WindowID.settings) {
             SettingsView(store: store)
-                .task {
-                    await store.bootstrap()
-                }
         }
         .defaultSize(width: 720, height: 620)
 
         Window("Job Log Tail", id: WindowID.logTail) {
             JobLogTailWindowView(store: store)
-                .task {
-                    await store.bootstrap()
-                }
         }
         .defaultSize(width: 860, height: 560)
 
         Window("Launch Command", id: WindowID.launchCommand) {
             JobLaunchCommandWindowView(store: store)
-                .task {
-                    await store.bootstrap()
-                }
         }
         .defaultSize(width: 900, height: 620)
     }

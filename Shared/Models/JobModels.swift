@@ -237,6 +237,168 @@ public enum JobLogStream: String, Codable, CaseIterable, Hashable, Identifiable,
     }
 }
 
+public enum ClusterLoadLevel: String, Codable, CaseIterable, Hashable, Sendable {
+    case open
+    case busy
+    case constrained
+    case full
+    case unknown
+
+    public var title: String {
+        switch self {
+        case .open:
+            return "Open"
+        case .busy:
+            return "Busy"
+        case .constrained:
+            return "Constrained"
+        case .full:
+            return "Full"
+        case .unknown:
+            return "Unknown"
+        }
+    }
+}
+
+public struct ClusterQoSGPUAvailability: Hashable, Sendable {
+    public var qosName: String
+    public var freeGPUCount: Int
+    public var totalGPUCount: Int
+    public var sourceDescription: String?
+
+    public init(qosName: String, freeGPUCount: Int, totalGPUCount: Int, sourceDescription: String? = nil) {
+        self.qosName = qosName.trimmedOrEmpty
+        self.freeGPUCount = freeGPUCount
+        self.totalGPUCount = totalGPUCount
+        self.sourceDescription = sourceDescription?.trimmedOrEmpty.nilIfEmpty
+    }
+
+    public var summaryText: String {
+        "\(qosName) \(freeGPUCount)/\(totalGPUCount)"
+    }
+}
+
+public struct ClusterLoadSnapshot: Hashable, Sendable {
+    public var level: ClusterLoadLevel
+    public var jobCount: Int?
+    public var pendingJobCount: Int?
+    public var scopedFreeGPUCount: Int?
+    public var scopedTotalGPUCount: Int?
+    public var scopedGPUDescription: String?
+    public var qosGPUAvailabilities: [ClusterQoSGPUAvailability]
+    public var freeCPUCount: Int?
+    public var totalCPUCount: Int?
+    public var freeGPUCount: Int?
+    public var totalGPUCount: Int?
+    public var freeNodeCount: Int?
+    public var totalNodeCount: Int?
+    public var jobHeadroom: Int?
+    public var accessiblePartitions: [String]
+    public var lastUpdatedAt: Date?
+    public var message: String?
+
+    public init(
+        level: ClusterLoadLevel,
+        jobCount: Int? = nil,
+        pendingJobCount: Int? = nil,
+        scopedFreeGPUCount: Int? = nil,
+        scopedTotalGPUCount: Int? = nil,
+        scopedGPUDescription: String? = nil,
+        qosGPUAvailabilities: [ClusterQoSGPUAvailability] = [],
+        freeCPUCount: Int? = nil,
+        totalCPUCount: Int? = nil,
+        freeGPUCount: Int? = nil,
+        totalGPUCount: Int? = nil,
+        freeNodeCount: Int? = nil,
+        totalNodeCount: Int? = nil,
+        jobHeadroom: Int? = nil,
+        accessiblePartitions: [String] = [],
+        lastUpdatedAt: Date? = nil,
+        message: String? = nil
+    ) {
+        self.level = level
+        self.jobCount = jobCount
+        self.pendingJobCount = pendingJobCount
+        self.scopedFreeGPUCount = scopedFreeGPUCount
+        self.scopedTotalGPUCount = scopedTotalGPUCount
+        self.scopedGPUDescription = scopedGPUDescription?.trimmedOrEmpty.nilIfEmpty
+        self.qosGPUAvailabilities = qosGPUAvailabilities
+        self.freeCPUCount = freeCPUCount
+        self.totalCPUCount = totalCPUCount
+        self.freeGPUCount = freeGPUCount
+        self.totalGPUCount = totalGPUCount
+        self.freeNodeCount = freeNodeCount
+        self.totalNodeCount = totalNodeCount
+        self.jobHeadroom = jobHeadroom
+        self.accessiblePartitions = accessiblePartitions
+        self.lastUpdatedAt = lastUpdatedAt
+        self.message = message?.trimmedOrEmpty.nilIfEmpty
+    }
+
+    public static func unknown(message: String? = nil, lastUpdatedAt: Date? = nil) -> ClusterLoadSnapshot {
+        ClusterLoadSnapshot(level: .unknown, lastUpdatedAt: lastUpdatedAt, message: message)
+    }
+
+    public var primaryFreeResourceText: String? {
+        if let scopedTotalGPUCount, scopedTotalGPUCount > 0, let scopedFreeGPUCount {
+            return "Free \(scopedFreeGPUCount) GPU"
+        }
+        if let totalGPUCount, totalGPUCount > 0, let freeGPUCount {
+            return "Free \(freeGPUCount) GPU"
+        }
+        if let totalCPUCount, totalCPUCount > 0, let freeCPUCount {
+            return "Free \(freeCPUCount) CPU"
+        }
+        if let totalNodeCount, totalNodeCount > 0, let freeNodeCount {
+            return "Free \(freeNodeCount) \(freeNodeCount == 1 ? "node" : "nodes")"
+        }
+        return nil
+    }
+
+    public var detailResourceText: String? {
+        var parts: [String] = []
+        if let freeGPUCount, let totalGPUCount, totalGPUCount > 0 {
+            parts.append("Cluster GPU \(freeGPUCount)/\(totalGPUCount) free")
+        }
+        if let freeCPUCount, let totalCPUCount, totalCPUCount > 0 {
+            parts.append("CPU \(freeCPUCount)/\(totalCPUCount) free")
+        }
+        if let freeNodeCount, let totalNodeCount, totalNodeCount > 0 {
+            parts.append("Nodes \(freeNodeCount)/\(totalNodeCount) free")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " • ")
+    }
+
+    public var qosSummaryText: String? {
+        guard !qosGPUAvailabilities.isEmpty else { return nil }
+        return "QoS " + qosGPUAvailabilities.map(\.summaryText).joined(separator: " • ")
+    }
+
+    public var summaryText: String {
+        var parts: [String] = []
+
+        if let jobCount {
+            parts.append("Jobs \(jobCount)")
+        } else {
+            parts.append("Jobs unknown")
+        }
+
+        if let primaryFreeResourceText {
+            parts.append(primaryFreeResourceText)
+        }
+
+        if let jobHeadroom {
+            parts.append("Headroom \(jobHeadroom) jobs")
+        }
+
+        if parts.count == 1, let message, !message.isEmpty {
+            return message
+        }
+
+        return parts.joined(separator: " • ")
+    }
+}
+
 public struct JobLogTailSession: Hashable, Identifiable, Sendable {
     public var clusterID: ClusterID
     public var clusterName: String
@@ -339,6 +501,8 @@ public struct CurrentJob: Identifiable, Codable, Hashable, Sendable {
     public var dependencyExpression: String?
     public var dependencyJobIDs: [String]
     public var dependencyIsActive: Bool
+    public var qosName: String?
+    public var gpuCount: Int?
 
     public init(
         clusterID: ClusterID,
@@ -353,7 +517,9 @@ public struct CurrentJob: Identifiable, Codable, Hashable, Sendable {
         pendingReason: String? = nil,
         dependencyExpression: String? = nil,
         dependencyJobIDs: [String] = [],
-        dependencyIsActive: Bool = false
+        dependencyIsActive: Bool = false,
+        qosName: String? = nil,
+        gpuCount: Int? = nil
     ) {
         self.clusterID = clusterID
         self.jobID = jobID
@@ -368,6 +534,8 @@ public struct CurrentJob: Identifiable, Codable, Hashable, Sendable {
         self.dependencyExpression = dependencyExpression?.trimmedOrEmpty.nilIfEmpty
         self.dependencyJobIDs = dependencyJobIDs
         self.dependencyIsActive = dependencyIsActive
+        self.qosName = qosName?.trimmedOrEmpty.nilIfEmpty
+        self.gpuCount = gpuCount
     }
 
     public var id: String {

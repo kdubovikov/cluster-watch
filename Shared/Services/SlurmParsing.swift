@@ -1,7 +1,7 @@
 import Foundation
 
 public enum SlurmParsing {
-    public static let squeueFormat = "%i|%u|%T|%j|%V|%S|%M|%E|%r"
+    public static let squeueFormat = "%i|%u|%T|%j|%V|%S|%M|%E|%r|%q|%b"
     public static let sacctFormat = "JobIDRaw,User,State,JobName,Submit,Start,End,Elapsed,Reason"
     public static let sacctLogFormat = "JobIDRaw,StdOut,StdErr,WorkDir"
 
@@ -63,8 +63,8 @@ public enum SlurmParsing {
     }
 
     private static func parseCurrentJobRow(_ row: String, clusterID: ClusterID) -> CurrentJob? {
-        let parts = splitColumns(row, expectedCount: 9)
-        guard parts.count == 9 else { return nil }
+        let parts = splitColumns(row, expectedCount: 11)
+        guard parts.count == 11 else { return nil }
 
         let rawState = parts[2]
         let state = NormalizedJobState(rawSlurmState: rawState)
@@ -89,7 +89,9 @@ public enum SlurmParsing {
                 state: state,
                 pendingReason: pendingReason,
                 dependencyExpression: dependencyExpression
-            )
+            ),
+            qosName: parseToken(parts[9]),
+            gpuCount: parseGRESGPUCount(parts[10])
         )
     }
 
@@ -175,6 +177,35 @@ public enum SlurmParsing {
             return nil
         }
         return value
+    }
+
+    private static func parseToken(_ rawValue: String) -> String? {
+        let value = rawValue.trimmedOrEmpty
+        let lowercased = value.lowercased()
+        guard !value.isEmpty, lowercased != "(null)", lowercased != "none", lowercased != "n/a" else {
+            return nil
+        }
+        return value
+    }
+
+    private static func parseGRESGPUCount(_ rawValue: String) -> Int? {
+        let value = rawValue.trimmedOrEmpty
+        guard !value.isEmpty else { return nil }
+        let lowercased = value.lowercased()
+        guard lowercased != "(null)", lowercased != "none", lowercased != "n/a" else {
+            return nil
+        }
+
+        let tokens = value.split(separator: ",", omittingEmptySubsequences: true)
+        let counts = tokens.compactMap { token -> Int? in
+            let trimmed = String(token).trimmedOrEmpty
+            guard trimmed.hasPrefix("gres/gpu") else { return nil }
+            let suffix = trimmed.split(separator: ":").last.map(String.init) ?? ""
+            return Int(suffix)
+        }
+
+        guard !counts.isEmpty else { return nil }
+        return counts.reduce(0, +)
     }
 
     private struct HistoricalRow {
