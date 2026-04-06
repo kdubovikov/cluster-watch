@@ -1,6 +1,9 @@
 import SwiftUI
 
 struct WatchedJobRowView: View {
+    @State private var isConfirmingCancel = false
+    @State private var isCancelling = false
+
     enum DisplayStyle {
         case standalone
         case chain(depth: Int)
@@ -35,6 +38,7 @@ struct WatchedJobRowView: View {
     var reservedTrailingInset: CGFloat = 0
     let commandAction: () -> Void
     let tailAction: () -> Void
+    let cancelAction: () async -> Bool
     let unwatchAction: () -> Void
 
     var body: some View {
@@ -138,6 +142,16 @@ struct WatchedJobRowView: View {
                     .controlSize(.small)
                 }
 
+                if showsCancelAction {
+                    InlineCancelActionView(
+                        isCompact: displayStyle.isChain,
+                        isConfirming: $isConfirmingCancel,
+                        isCancelling: $isCancelling,
+                        confirmLabel: "Cancel Job",
+                        action: cancelAction
+                    )
+                }
+
                 if showsPrimaryAction {
                     Button {
                         unwatchAction()
@@ -204,6 +218,10 @@ struct WatchedJobRowView: View {
         (displayStyle.isChain ? 6 : 10) + reservedTrailingInset
     }
 
+    private var showsCancelAction: Bool {
+        !job.isTerminal && !job.isStale
+    }
+
     private func copyToPasteboard(_ text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -217,6 +235,68 @@ struct WatchedJobRowView: View {
         } else {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.primary.opacity(0.04))
+        }
+    }
+}
+
+struct InlineCancelActionView: View {
+    let isCompact: Bool
+    @Binding var isConfirming: Bool
+    @Binding var isCancelling: Bool
+    let confirmLabel: String
+    let action: () async -> Bool
+
+    var body: some View {
+        Group {
+            if isCancelling {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(width: isCompact ? nil : 52, alignment: .center)
+            } else if isConfirming {
+                HStack(spacing: 6) {
+                    if !isCompact {
+                        Text("Confirm")
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button {
+                        Task {
+                            isCancelling = true
+                            _ = await action()
+                            isCancelling = false
+                            isConfirming = false
+                        }
+                    } label: {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.red)
+                            .accessibilityLabel(confirmLabel)
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .help(confirmLabel)
+
+                    Button {
+                        isConfirming = false
+                    } label: {
+                        Image(systemName: "arrow.uturn.backward.circle")
+                            .accessibilityLabel("Keep job")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .help("Keep job")
+                }
+            } else {
+                Button {
+                    isConfirming = true
+                } label: {
+                    Image(systemName: "stop.circle")
+                        .accessibilityLabel("Cancel job")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .help("Cancel job")
+            }
         }
     }
 }

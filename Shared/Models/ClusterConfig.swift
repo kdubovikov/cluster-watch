@@ -32,6 +32,8 @@ public struct ClusterConfig: Identifiable, Codable, Hashable, Sendable {
     public var sshUsername: String
     public var isEnabled: Bool
     public var usernameOverride: String
+    public var usableGPUCap: Int?
+    public var usableNodeCap: Int?
 
     public init(
         id: ClusterID = .new(),
@@ -39,7 +41,9 @@ public struct ClusterConfig: Identifiable, Codable, Hashable, Sendable {
         sshAlias: String,
         sshUsername: String = "",
         isEnabled: Bool = true,
-        usernameOverride: String = ""
+        usernameOverride: String = "",
+        usableGPUCap: Int? = nil,
+        usableNodeCap: Int? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -47,6 +51,8 @@ public struct ClusterConfig: Identifiable, Codable, Hashable, Sendable {
         self.sshUsername = sshUsername
         self.isEnabled = isEnabled
         self.usernameOverride = usernameOverride
+        self.usableGPUCap = usableGPUCap
+        self.usableNodeCap = usableNodeCap
     }
 
     public var effectiveSSHDestination: String {
@@ -69,7 +75,9 @@ public struct ClusterConfig: Identifiable, Codable, Hashable, Sendable {
             sshAlias: sshAlias,
             sshUsername: sshUsername,
             isEnabled: isEnabled,
-            usernameOverride: usernameOverride
+            usernameOverride: usernameOverride,
+            usableGPUCap: usableGPUCap,
+            usableNodeCap: usableNodeCap
         )
     }
 
@@ -83,7 +91,9 @@ public struct ClusterConfig: Identifiable, Codable, Hashable, Sendable {
             sshAlias: "",
             sshUsername: "",
             isEnabled: true,
-            usernameOverride: ""
+            usernameOverride: "",
+            usableGPUCap: nil,
+            usableNodeCap: nil
         )
     }
 }

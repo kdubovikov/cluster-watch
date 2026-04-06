@@ -7,6 +7,8 @@ public protocol SlurmClientProtocol: Sendable {
     func fetchLaunchDetails(for cluster: ClusterConfig, jobID: String) async throws -> JobLaunchDetails?
     func fetchClusterLoad(for cluster: ClusterConfig, username: String, currentJobs: [CurrentJob]) async throws -> ClusterLoadSnapshot
     func tailLog(for cluster: ClusterConfig, remotePath: String, lineCount: Int) async throws -> String
+    func cancelJob(for cluster: ClusterConfig, jobID: String) async throws
+    func cancelJobs(for cluster: ClusterConfig, jobIDs: [String]) async throws
 }
 
 public enum SlurmClientError: LocalizedError, Equatable {
@@ -139,7 +141,7 @@ public actor SlurmClient: SlurmClientProtocol {
 
         var queueSummary: ClusterQueueSummary?
         var resourceSummary: ClusterLoadResourceSummary?
-        var accountRunningGPUByQOS: [String: Int] = [:]
+        var scopedUsageSummary = ClusterScopedUsageSummary()
         var messages: [String] = []
 
         if discovery.hasPartitionMetadata, discovery.accessiblePartitions.isEmpty {
@@ -170,9 +172,15 @@ public actor SlurmClient: SlurmClientProtocol {
                 messages.append((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
             }
 
-            if !discovery.accountGPUCapByQOS.isEmpty {
+            let needsScopedUsage = !discovery.accessibleAccounts.isEmpty && (
+                !discovery.accountGPUCapByQOS.isEmpty
+                    || cluster.usableGPUCap != nil
+                    || cluster.usableNodeCap != nil
+            )
+
+            if needsScopedUsage {
                 do {
-                    accountRunningGPUByQOS = try await fetchRunningGPUUsageByQOS(
+                    scopedUsageSummary = try await fetchScopedUsageSummary(
                         for: cluster,
                         accounts: discovery.accessibleAccounts
                     )
@@ -188,7 +196,11 @@ public actor SlurmClient: SlurmClientProtocol {
             queueSummary: queueSummary,
             resourceSummary: resourceSummary,
             userRunningGPUByQOS: userRunningGPUByQOS,
-            accountRunningGPUByQOS: accountRunningGPUByQOS,
+            accountRunningGPUByQOS: scopedUsageSummary.runningGPUByQOS,
+            scopedRunningGPUCount: scopedUsageSummary.runningGPUCount,
+            scopedRunningNodeCount: scopedUsageSummary.runningNodeCount,
+            configuredGPUCap: cluster.usableGPUCap,
+            configuredNodeCap: cluster.usableNodeCap,
             now: now,
             message: messages.first
         )
@@ -203,6 +215,23 @@ public actor SlurmClient: SlurmClientProtocol {
         return try await runSSH(
             destination: cluster.effectiveSSHDestination,
             remoteCommand: "LC_ALL=C tail -n \(safeLineCount) -- \(shellEscape(remotePath))"
+        )
+    }
+
+    public func cancelJob(for cluster: ClusterConfig, jobID: String) async throws {
+        try await cancelJobs(for: cluster, jobIDs: [jobID])
+    }
+
+    public func cancelJobs(for cluster: ClusterConfig, jobIDs: [String]) async throws {
+        guard !cluster.effectiveSSHDestination.isEmpty else {
+            throw SlurmClientError.invalidConfiguration("Missing SSH alias for \(cluster.displayName).")
+        }
+        let cleanedJobIDs = jobIDs.map(\.trimmedOrEmpty).filter { !$0.isEmpty }
+        guard !cleanedJobIDs.isEmpty else { return }
+
+        _ = try await runSSH(
+            destination: cluster.effectiveSSHDestination,
+            remoteCommand: "scancel \(shellEscape(cleanedJobIDs.joined(separator: ",")))"
         )
     }
 
@@ -314,28 +343,35 @@ public actor SlurmClient: SlurmClientProtocol {
         return ClusterQueueSummary(totalJobCount: states.count, pendingJobCount: pendingJobCount)
     }
 
-    private func fetchRunningGPUUsageByQOS(
+    private func fetchScopedUsageSummary(
         for cluster: ClusterConfig,
         accounts: [String]
-    ) async throws -> [String: Int] {
-        guard !accounts.isEmpty else { return [:] }
+    ) async throws -> ClusterScopedUsageSummary {
+        guard !accounts.isEmpty else { return ClusterScopedUsageSummary() }
 
-        let remoteCommand = "squeue -h -A \(shellEscape(accounts.joined(separator: ","))) -o '%q|%b|%T'"
+        let remoteCommand = "squeue -h -A \(shellEscape(accounts.joined(separator: ","))) -o '%q|%b|%T|%D'"
         let output = try await runSSH(destination: cluster.effectiveSSHDestination, remoteCommand: remoteCommand)
 
         return output
             .split(whereSeparator: \.isNewline)
-            .reduce(into: [String: Int]()) { partialResult, line in
+            .reduce(into: ClusterScopedUsageSummary()) { partialResult, line in
                 let parts = String(line)
                     .split(separator: "|", omittingEmptySubsequences: false)
                     .map(String.init)
-                guard parts.count == 3 else { return }
-                let qos = parts[0].trimmedOrEmpty
-                guard !qos.isEmpty else { return }
+                guard parts.count == 4 else { return }
                 let state = NormalizedJobState(rawSlurmState: parts[2])
                 guard state == .running else { return }
-                let gpuCount = ClusterLoadSupport.parseGRESGPUCount(parts[1]) ?? 0
-                partialResult[qos, default: 0] += gpuCount
+
+                let nodeCount = max(1, Int(parts[3].trimmedOrEmpty) ?? 1)
+                let gpuPerNodeCount = ClusterLoadSupport.parseGRESGPUCount(parts[1]) ?? 0
+                let totalGPUCount = gpuPerNodeCount * nodeCount
+
+                partialResult.runningNodeCount += nodeCount
+                partialResult.runningGPUCount += totalGPUCount
+
+                let qos = parts[0].trimmedOrEmpty
+                guard !qos.isEmpty else { return }
+                partialResult.runningGPUByQOS[qos, default: 0] += totalGPUCount
             }
     }
 
@@ -633,9 +669,21 @@ struct ClusterQueueSummary: Hashable, Sendable {
     var pendingJobCount: Int
 }
 
+struct ClusterScopedUsageSummary: Hashable, Sendable {
+    var runningGPUByQOS: [String: Int] = [:]
+    var runningGPUCount: Int = 0
+    var runningNodeCount: Int = 0
+}
+
 struct ClusterScopedGPUAvailability: Hashable, Sendable {
     var freeGPUCount: Int
     var totalGPUCount: Int
+    var description: String
+}
+
+struct ClusterScopedNodeAvailability: Hashable, Sendable {
+    var freeNodeCount: Int
+    var totalNodeCount: Int
     var description: String
 }
 
@@ -897,6 +945,10 @@ enum ClusterLoadSupport {
         resourceSummary: ClusterLoadResourceSummary?,
         userRunningGPUByQOS: [String: Int],
         accountRunningGPUByQOS: [String: Int],
+        scopedRunningGPUCount: Int,
+        scopedRunningNodeCount: Int,
+        configuredGPUCap: Int?,
+        configuredNodeCap: Int?,
         now: Date,
         message: String?
     ) -> ClusterLoadSnapshot {
@@ -914,6 +966,21 @@ enum ClusterLoadSupport {
             qosGPUAvailabilities: qosGPUAvailabilities,
             resourceSummary: resourceSummary
         )
+        let configuredGPUAvailability = configuredScopedGPUAvailability(
+            configuredGPUCap: configuredGPUCap,
+            configuredNodeCap: configuredNodeCap,
+            scopedRunningGPUCount: scopedRunningGPUCount,
+            resourceSummary: resourceSummary
+        )
+        let effectiveScopedGPUAvailability = tighterScopedGPUAvailability(
+            scopedGPUAvailability,
+            configuredGPUAvailability
+        )
+        let scopedNodeAvailability = configuredScopedNodeAvailability(
+            configuredNodeCap: configuredNodeCap,
+            scopedRunningNodeCount: scopedRunningNodeCount,
+            resourceSummary: resourceSummary
+        )
 
         let jobHeadroom: Int? = {
             guard discovery.limitsEnforced else { return nil }
@@ -928,7 +995,8 @@ enum ClusterLoadSupport {
         let level = deriveLevel(
             pendingJobCount: pendingJobCount,
             resourceSummary: resourceSummary,
-            scopedGPUAvailability: scopedGPUAvailability,
+            scopedGPUAvailability: effectiveScopedGPUAvailability,
+            scopedNodeAvailability: scopedNodeAvailability,
             jobHeadroom: jobHeadroom
         )
 
@@ -936,9 +1004,12 @@ enum ClusterLoadSupport {
             level: level,
             jobCount: queueSummary?.totalJobCount,
             pendingJobCount: pendingJobCount,
-            scopedFreeGPUCount: scopedGPUAvailability?.freeGPUCount,
-            scopedTotalGPUCount: scopedGPUAvailability?.totalGPUCount,
-            scopedGPUDescription: scopedGPUAvailability?.description,
+            scopedFreeGPUCount: effectiveScopedGPUAvailability?.freeGPUCount,
+            scopedTotalGPUCount: effectiveScopedGPUAvailability?.totalGPUCount,
+            scopedGPUDescription: effectiveScopedGPUAvailability?.description,
+            scopedFreeNodeCount: scopedNodeAvailability?.freeNodeCount,
+            scopedTotalNodeCount: scopedNodeAvailability?.totalNodeCount,
+            scopedNodeDescription: scopedNodeAvailability?.description,
             qosGPUAvailabilities: qosGPUAvailabilities,
             freeCPUCount: resourceSummary?.freeCPUCount,
             totalCPUCount: resourceSummary?.totalCPUCount,
@@ -957,6 +1028,7 @@ enum ClusterLoadSupport {
         pendingJobCount: Int?,
         resourceSummary: ClusterLoadResourceSummary?,
         scopedGPUAvailability: ClusterScopedGPUAvailability?,
+        scopedNodeAvailability: ClusterScopedNodeAvailability?,
         jobHeadroom: Int?
     ) -> ClusterLoadLevel {
         guard pendingJobCount != nil || resourceSummary != nil else {
@@ -966,6 +1038,9 @@ enum ClusterLoadSupport {
         let relevantFree: Int? = {
             if let scopedGPUAvailability {
                 return scopedGPUAvailability.freeGPUCount
+            }
+            if let scopedNodeAvailability {
+                return scopedNodeAvailability.freeNodeCount
             }
             guard let resourceSummary else { return nil }
             if resourceSummary.totalGPUCount > 0 {
@@ -980,6 +1055,9 @@ enum ClusterLoadSupport {
         let relevantTotal: Int? = {
             if let scopedGPUAvailability {
                 return scopedGPUAvailability.totalGPUCount
+            }
+            if let scopedNodeAvailability {
+                return scopedNodeAvailability.totalNodeCount
             }
             guard let resourceSummary else { return nil }
             if resourceSummary.totalGPUCount > 0 {
@@ -1028,8 +1106,63 @@ enum ClusterLoadSupport {
                   gpuCount > 0 else {
                 return
             }
-            partialResult[qos, default: 0] += gpuCount
+            let nodeCount = max(1, job.nodeCount ?? 1)
+            partialResult[qos, default: 0] += gpuCount * nodeCount
         }
+    }
+
+    static func configuredScopedGPUAvailability(
+        configuredGPUCap: Int?,
+        configuredNodeCap: Int?,
+        scopedRunningGPUCount: Int,
+        resourceSummary: ClusterLoadResourceSummary?
+    ) -> ClusterScopedGPUAvailability? {
+        let effectiveGPUCap: Int? = {
+            if let configuredGPUCap, configuredGPUCap > 0 {
+                return configuredGPUCap
+            }
+
+            guard let configuredNodeCap,
+                  configuredNodeCap > 0,
+                  let resourceSummary,
+                  resourceSummary.totalNodeCount > 0,
+                  resourceSummary.totalGPUCount > 0,
+                  resourceSummary.totalGPUCount % resourceSummary.totalNodeCount == 0 else {
+                return nil
+            }
+
+            let gpuPerNode = resourceSummary.totalGPUCount / resourceSummary.totalNodeCount
+            return gpuPerNode > 0 ? configuredNodeCap * gpuPerNode : nil
+        }()
+
+        guard let effectiveGPUCap, effectiveGPUCap > 0 else { return nil }
+
+        let clusterFreeGPUCount = resourceSummary?.freeGPUCount ?? max(0, effectiveGPUCap - scopedRunningGPUCount)
+        let freeGPUCount = min(clusterFreeGPUCount, max(0, effectiveGPUCap - scopedRunningGPUCount))
+        let description = configuredGPUCap != nil ? "Configured GPU cap" : "Configured node cap"
+
+        return ClusterScopedGPUAvailability(
+            freeGPUCount: freeGPUCount,
+            totalGPUCount: effectiveGPUCap,
+            description: description
+        )
+    }
+
+    static func configuredScopedNodeAvailability(
+        configuredNodeCap: Int?,
+        scopedRunningNodeCount: Int,
+        resourceSummary: ClusterLoadResourceSummary?
+    ) -> ClusterScopedNodeAvailability? {
+        guard let configuredNodeCap, configuredNodeCap > 0 else { return nil }
+
+        let clusterFreeNodeCount = resourceSummary?.freeNodeCount ?? max(0, configuredNodeCap - scopedRunningNodeCount)
+        let freeNodeCount = min(clusterFreeNodeCount, max(0, configuredNodeCap - scopedRunningNodeCount))
+
+        return ClusterScopedNodeAvailability(
+            freeNodeCount: freeNodeCount,
+            totalNodeCount: configuredNodeCap,
+            description: "Configured node cap"
+        )
     }
 
     static func effectiveGPUAvailabilities(
@@ -1104,6 +1237,28 @@ enum ClusterLoadSupport {
             totalGPUCount: summedTotal,
             description: "All QoS"
         )
+    }
+
+    static func tighterScopedGPUAvailability(
+        _ lhs: ClusterScopedGPUAvailability?,
+        _ rhs: ClusterScopedGPUAvailability?
+    ) -> ClusterScopedGPUAvailability? {
+        switch (lhs, rhs) {
+        case let (lhs?, rhs?):
+            if lhs.freeGPUCount != rhs.freeGPUCount {
+                return lhs.freeGPUCount < rhs.freeGPUCount ? lhs : rhs
+            }
+            if lhs.totalGPUCount != rhs.totalGPUCount {
+                return lhs.totalGPUCount < rhs.totalGPUCount ? lhs : rhs
+            }
+            return lhs
+        case let (lhs?, nil):
+            return lhs
+        case let (nil, rhs?):
+            return rhs
+        case (nil, nil):
+            return nil
+        }
     }
 
     private static func splitColumns(_ row: String, expectedCount: Int) -> [String] {

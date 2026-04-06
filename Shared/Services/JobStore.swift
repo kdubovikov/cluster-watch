@@ -204,6 +204,28 @@ public final class JobStore {
         persistAsync()
     }
 
+    public func cancel(job: CurrentJob) async -> Bool {
+        guard !job.state.isTerminal else { return false }
+        return await cancel(jobIDsByCluster: [job.clusterID: [job.jobID]])
+    }
+
+    public func cancel(job: WatchedJob) async -> Bool {
+        guard !job.isTerminal, !job.isStale else { return false }
+        return await cancel(jobIDsByCluster: [job.clusterID: [job.jobID]])
+    }
+
+    public func cancel(jobs: [CurrentJob]) async -> Bool {
+        let jobIDsByCluster = Dictionary(grouping: jobs.filter { !$0.state.isTerminal }, by: \.clusterID)
+            .mapValues { jobs in jobs.map(\.jobID) }
+        return await cancel(jobIDsByCluster: jobIDsByCluster)
+    }
+
+    public func cancel(jobs: [WatchedJob]) async -> Bool {
+        let jobIDsByCluster = Dictionary(grouping: jobs.filter { !$0.isTerminal && !$0.isStale }, by: \.clusterID)
+            .mapValues { jobs in jobs.map(\.jobID) }
+        return await cancel(jobIDsByCluster: jobIDsByCluster)
+    }
+
     public func isWatched(_ currentJob: CurrentJob) -> Bool {
         watchedJobs.contains { $0.clusterID == currentJob.clusterID && $0.jobID == currentJob.jobID }
     }
@@ -464,6 +486,37 @@ public final class JobStore {
         } catch {
             return
         }
+    }
+
+    private func cancel(jobIDsByCluster: [ClusterID: [String]]) async -> Bool {
+        let cleanedByCluster = jobIDsByCluster
+            .mapValues { Array(Set($0.map(\.trimmedOrEmpty).filter { !$0.isEmpty })).sorted() }
+            .filter { !$0.value.isEmpty }
+
+        guard !cleanedByCluster.isEmpty else { return false }
+
+        var refreshedClusterIDs: [ClusterID] = []
+        var allSucceeded = true
+
+        for (clusterID, jobIDs) in cleanedByCluster {
+            guard let cluster = clusters.first(where: { $0.id == clusterID }), cluster.isEnabled else {
+                allSucceeded = false
+                continue
+            }
+
+            do {
+                try await slurmClient.cancelJobs(for: cluster, jobIDs: jobIDs)
+                refreshedClusterIDs.append(clusterID)
+            } catch {
+                allSucceeded = false
+            }
+        }
+
+        for clusterID in refreshedClusterIDs {
+            await refreshCluster(id: clusterID)
+        }
+
+        return allSucceeded && !refreshedClusterIDs.isEmpty
     }
 
     private func fetchLaunchDetails(clusterID: ClusterID, jobID: String) async -> JobLaunchDetails? {

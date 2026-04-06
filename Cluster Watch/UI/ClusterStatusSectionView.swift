@@ -231,6 +231,10 @@ private struct ClusterLoadRowView: View {
             parts.append("Pending \(pendingJobCount)")
         }
 
+        if let scopedText = load.scopedDetailText, !scopedText.isEmpty {
+            parts.append(scopedText)
+        }
+
         if let partitionsText = partitionsText {
             parts.append(partitionsText)
         }

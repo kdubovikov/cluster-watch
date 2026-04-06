@@ -56,6 +56,9 @@ struct WatchedJobsSectionView: View {
                                                     }
                                                 }
                                             },
+                                            cancelAction: {
+                                                await store.cancel(job: job)
+                                            },
                                             unwatchAction: {
                                                 store.unwatch(job: job)
                                             }
@@ -78,6 +81,9 @@ struct WatchedJobsSectionView: View {
 }
 
 private struct DependencyLinkedJobGroupView: View {
+    @State private var isConfirmingCancel = false
+    @State private var isCancelling = false
+
     let group: GroupedJobsViewModel.Group
     let store: JobStore
     let now: Date
@@ -98,7 +104,7 @@ private struct DependencyLinkedJobGroupView: View {
                     now: now,
                     displayStyle: .chain(depth: row.depth),
                     showsPrimaryAction: false,
-                    reservedTrailingInset: 22,
+                    reservedTrailingInset: groupHasCancellableJobs ? 48 : 22,
                     commandAction: {
                         Task {
                             if await store.prepareLaunchCommand(for: row.job) {
@@ -112,6 +118,9 @@ private struct DependencyLinkedJobGroupView: View {
                                 openLogTailWindow()
                             }
                         }
+                    },
+                    cancelAction: {
+                        await store.cancel(job: row.job)
                     },
                     unwatchAction: {
                         store.unwatch(job: row.job)
@@ -145,17 +154,31 @@ private struct DependencyLinkedJobGroupView: View {
                 .fill(Color.cyan.opacity(0.05))
         )
         .overlay(alignment: .topTrailing) {
-            Button {
-                store.unwatch(jobs: group.jobs)
-            } label: {
-                Image(systemName: "minus.circle")
-                    .accessibilityLabel("Unwatch Group")
+            HStack(spacing: 8) {
+                if groupHasCancellableJobs {
+                    InlineCancelActionView(
+                        isCompact: true,
+                        isConfirming: $isConfirmingCancel,
+                        isCancelling: $isCancelling,
+                        confirmLabel: "Cancel Group",
+                        action: {
+                            await store.cancel(jobs: cancellableJobs)
+                        }
+                    )
+                }
+
+                Button {
+                    store.unwatch(jobs: group.jobs)
+                } label: {
+                    Image(systemName: "minus.circle")
+                        .accessibilityLabel("Unwatch Group")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .help("Unwatch whole group")
             }
-            .buttonStyle(.borderless)
-            .controlSize(.small)
             .padding(.top, 10)
             .padding(.trailing, 14)
-            .help("Unwatch whole group")
         }
         .overlayPreferenceValue(DependencyRowFramePreferenceKey.self) { rows in
             DependencyChainOverlay(rows: rows)
@@ -164,6 +187,14 @@ private struct DependencyLinkedJobGroupView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.cyan.opacity(0.16), lineWidth: 1)
         )
+    }
+
+    private var cancellableJobs: [WatchedJob] {
+        group.jobs.filter { !$0.isTerminal && !$0.isStale }
+    }
+
+    private var groupHasCancellableJobs: Bool {
+        !cancellableJobs.isEmpty
     }
 }
 

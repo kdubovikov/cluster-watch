@@ -555,6 +555,146 @@ final class JobStoreTests: XCTestCase {
         )
     }
 
+    func testCancelCurrentJobCallsSlurmClient() async {
+        let job = CurrentJob(
+            clusterID: alphaClusterID,
+            jobID: "50100",
+            jobName: "train-model",
+            owner: "owner-a",
+            state: .running,
+            rawState: "RUNNING"
+        )
+
+        let client = MockSlurmClient(
+            currentResults: [alphaClusterID: .success([])],
+            historicalResults: [:]
+        )
+
+        let store = JobStore(
+            persistence: InMemoryPersistenceStore(),
+            slurmClient: client,
+            notificationManager: MockNotificationManager(),
+            pollingCoordinator: PollingCoordinator(),
+            initialState: PersistedAppState(
+                clusters: sampleClusters(),
+                globalUsernameFilter: "owner-a",
+                pollIntervalSeconds: 30,
+                watchedJobs: [],
+                reachabilityByCluster: [:]
+            )
+        )
+
+        let cancelled = await store.cancel(job: job)
+        let cancelRequests = await client.cancelRequests()
+
+        XCTAssertTrue(cancelled)
+        XCTAssertEqual(cancelRequests, ["cluster-alpha:50100"])
+    }
+
+    func testCancelWatchedJobSkipsStaleEntries() async {
+        let job = WatchedJob(
+            clusterID: alphaClusterID,
+            jobID: "50101",
+            jobName: "pending-work",
+            owner: "owner-a",
+            state: .pending,
+            rawState: "PENDING",
+            firstSeenAt: Date(timeIntervalSince1970: 100),
+            lastUpdatedAt: Date(timeIntervalSince1970: 120),
+            lastSuccessfulRefreshAt: Date(timeIntervalSince1970: 120),
+            isStale: true
+        )
+
+        let client = MockSlurmClient(
+            currentResults: [:],
+            historicalResults: [:]
+        )
+
+        let store = JobStore(
+            persistence: InMemoryPersistenceStore(),
+            slurmClient: client,
+            notificationManager: MockNotificationManager(),
+            pollingCoordinator: PollingCoordinator(),
+            initialState: PersistedAppState(
+                clusters: sampleClusters(),
+                globalUsernameFilter: "owner-a",
+                pollIntervalSeconds: 30,
+                watchedJobs: [job],
+                reachabilityByCluster: [:]
+            )
+        )
+
+        let cancelled = await store.cancel(job: job)
+        let cancelRequests = await client.cancelRequests()
+
+        XCTAssertFalse(cancelled)
+        XCTAssertEqual(cancelRequests, [])
+    }
+
+    func testCancelWatchedJobGroupBatchesIDsPerCluster() async {
+        let jobs = [
+            WatchedJob(
+                clusterID: alphaClusterID,
+                jobID: "50102",
+                jobName: "train-a",
+                owner: "owner-a",
+                state: .running,
+                rawState: "RUNNING",
+                firstSeenAt: Date(timeIntervalSince1970: 100),
+                lastUpdatedAt: Date(timeIntervalSince1970: 120),
+                lastSuccessfulRefreshAt: Date(timeIntervalSince1970: 120)
+            ),
+            WatchedJob(
+                clusterID: alphaClusterID,
+                jobID: "50103",
+                jobName: "train-b",
+                owner: "owner-a",
+                state: .pending,
+                rawState: "PENDING",
+                firstSeenAt: Date(timeIntervalSince1970: 100),
+                lastUpdatedAt: Date(timeIntervalSince1970: 120),
+                lastSuccessfulRefreshAt: Date(timeIntervalSince1970: 120)
+            ),
+            WatchedJob(
+                clusterID: alphaClusterID,
+                jobID: "50104",
+                jobName: "train-c",
+                owner: "owner-a",
+                state: .completed,
+                rawState: "COMPLETED",
+                notificationSent: true,
+                firstSeenAt: Date(timeIntervalSince1970: 100),
+                lastUpdatedAt: Date(timeIntervalSince1970: 120),
+                lastSuccessfulRefreshAt: Date(timeIntervalSince1970: 120)
+            )
+        ]
+
+        let client = MockSlurmClient(
+            currentResults: [alphaClusterID: .success([])],
+            historicalResults: [:]
+        )
+
+        let store = JobStore(
+            persistence: InMemoryPersistenceStore(),
+            slurmClient: client,
+            notificationManager: MockNotificationManager(),
+            pollingCoordinator: PollingCoordinator(),
+            initialState: PersistedAppState(
+                clusters: sampleClusters(),
+                globalUsernameFilter: "owner-a",
+                pollIntervalSeconds: 30,
+                watchedJobs: jobs,
+                reachabilityByCluster: [:]
+            )
+        )
+
+        let cancelled = await store.cancel(jobs: jobs)
+        let cancelRequests = await client.cancelRequests()
+
+        XCTAssertTrue(cancelled)
+        XCTAssertEqual(cancelRequests, ["cluster-alpha:50102,50103"])
+    }
+
     private func sampleClusters() -> [ClusterConfig] {
         [
             ClusterConfig(id: alphaClusterID, displayName: "Cluster Alpha", sshAlias: "alpha-login"),
@@ -586,8 +726,10 @@ private actor MockSlurmClient: SlurmClientProtocol {
     private let logPathResults: [String: Result<JobLogPaths?, Error>]
     private let launchDetailsResults: [String: Result<JobLaunchDetails?, Error>]
     private let tailResults: [String: Result<String, Error>]
+    private let cancelResults: [String: Result<Void, Error>]
     private let currentDelaysNanoseconds: [ClusterID: UInt64]
     private let historicalDelaysNanoseconds: [String: UInt64]
+    private var recordedCancelRequests: [String] = []
 
     init(
         currentResults: [ClusterID: Result<[CurrentJob], Error>],
@@ -596,6 +738,7 @@ private actor MockSlurmClient: SlurmClientProtocol {
         logPathResults: [String: Result<JobLogPaths?, Error>] = [:],
         launchDetailsResults: [String: Result<JobLaunchDetails?, Error>] = [:],
         tailResults: [String: Result<String, Error>] = [:],
+        cancelResults: [String: Result<Void, Error>] = [:],
         currentDelaysNanoseconds: [ClusterID: UInt64] = [:],
         historicalDelaysNanoseconds: [String: UInt64] = [:]
     ) {
@@ -605,6 +748,7 @@ private actor MockSlurmClient: SlurmClientProtocol {
         self.logPathResults = logPathResults
         self.launchDetailsResults = launchDetailsResults
         self.tailResults = tailResults
+        self.cancelResults = cancelResults
         self.currentDelaysNanoseconds = currentDelaysNanoseconds
         self.historicalDelaysNanoseconds = historicalDelaysNanoseconds
     }
@@ -656,6 +800,22 @@ private actor MockSlurmClient: SlurmClientProtocol {
             return try result.get()
         }
         return ""
+    }
+
+    func cancelJob(for cluster: ClusterConfig, jobID: String) async throws {
+        try await cancelJobs(for: cluster, jobIDs: [jobID])
+    }
+
+    func cancelJobs(for cluster: ClusterConfig, jobIDs: [String]) async throws {
+        let key = "\(cluster.id.rawValue):\(jobIDs.joined(separator: ","))"
+        recordedCancelRequests.append(key)
+        if let result = cancelResults[key] {
+            try result.get()
+        }
+    }
+
+    func cancelRequests() -> [String] {
+        recordedCancelRequests
     }
 }
 

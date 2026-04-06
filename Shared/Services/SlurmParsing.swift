@@ -1,7 +1,7 @@
 import Foundation
 
 public enum SlurmParsing {
-    public static let squeueFormat = "%i|%u|%T|%j|%V|%S|%M|%E|%r|%q|%b"
+    public static let squeueFormat = "%i|%u|%T|%j|%V|%S|%M|%E|%r|%q|%D|%b"
     public static let sacctFormat = "JobIDRaw,User,State,JobName,Submit,Start,End,Elapsed,Reason"
     public static let sacctLogFormat = "JobIDRaw,StdOut,StdErr,WorkDir"
 
@@ -63,8 +63,8 @@ public enum SlurmParsing {
     }
 
     private static func parseCurrentJobRow(_ row: String, clusterID: ClusterID) -> CurrentJob? {
-        let parts = splitColumns(row, expectedCount: 11)
-        guard parts.count == 11 else { return nil }
+        let parts = splitColumns(row, expectedCount: 12)
+        guard parts.count == 12 else { return nil }
 
         let rawState = parts[2]
         let state = NormalizedJobState(rawSlurmState: rawState)
@@ -91,7 +91,8 @@ public enum SlurmParsing {
                 dependencyExpression: dependencyExpression
             ),
             qosName: parseToken(parts[9]),
-            gpuCount: parseGRESGPUCount(parts[10])
+            gpuCount: parseGRESGPUCount(parts[11]),
+            nodeCount: Int(parts[10].trimmedOrEmpty)
         )
     }
 

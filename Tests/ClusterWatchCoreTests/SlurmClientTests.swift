@@ -87,7 +87,8 @@ final class SlurmClientTests: XCTestCase {
                 state: .running,
                 rawState: "RUNNING",
                 qosName: "gpu",
-                gpuCount: 2
+                gpuCount: 2,
+                nodeCount: 1
             ),
             CurrentJob(clusterID: ClusterID(rawValue: "alpha"), jobID: "2", jobName: "b", owner: "u", state: .pending, rawState: "PENDING")
         ]
@@ -108,6 +109,10 @@ final class SlurmClientTests: XCTestCase {
             resourceSummary: resources,
             userRunningGPUByQOS: ["gpu": 2],
             accountRunningGPUByQOS: [:],
+            scopedRunningGPUCount: 0,
+            scopedRunningNodeCount: 0,
+            configuredGPUCap: nil,
+            configuredNodeCap: nil,
             now: Date(timeIntervalSince1970: 100),
             message: nil
         )
@@ -146,7 +151,8 @@ final class SlurmClientTests: XCTestCase {
                 state: .running,
                 rawState: "RUNNING",
                 qosName: "gtqos",
-                gpuCount: 1
+                gpuCount: 1,
+                nodeCount: 1
             )
         ]
 
@@ -166,6 +172,10 @@ final class SlurmClientTests: XCTestCase {
             resourceSummary: resources,
             userRunningGPUByQOS: ["gtqos": 1],
             accountRunningGPUByQOS: [:],
+            scopedRunningGPUCount: 0,
+            scopedRunningNodeCount: 0,
+            configuredGPUCap: nil,
+            configuredNodeCap: nil,
             now: Date(timeIntervalSince1970: 100),
             message: nil
         )
@@ -175,6 +185,152 @@ final class SlurmClientTests: XCTestCase {
         XCTAssertEqual(snapshot.summaryText, "Jobs 56 • Free 79 GPU")
         XCTAssertEqual(snapshot.qosSummaryText, "QoS gtqos 11/12 • stqos 4/4 • xdqos 64/64")
         XCTAssertEqual(snapshot.detailResourceText, "Cluster GPU 412/1072 free • CPU 128/256 free • Nodes 55/134 free")
+    }
+
+    func testClusterLoadSupportLabelsUnscopedCapacityAsClusterFree() {
+        let discovery = ClusterLoadDiscoveryContext(
+            accessiblePartitions: ["gpuhigh2"],
+            accessibleAccounts: ["research"],
+            preferredQOSOrder: ["normal"],
+            userGPUCapByQOS: [:],
+            accountGPUCapByQOS: [:],
+            maxRunningJobs: 40,
+            maxSubmittedJobs: 100,
+            limitsEnforced: true,
+            hasPartitionMetadata: true
+        )
+
+        let resources = ClusterLoadResourceSummary(
+            freeCPUCount: 926,
+            totalCPUCount: 1024,
+            freeGPUCount: 24,
+            totalGPUCount: 64,
+            freeNodeCount: 3,
+            totalNodeCount: 8
+        )
+
+        let snapshot = ClusterLoadSupport.makeSnapshot(
+            discovery: discovery,
+            currentJobs: [],
+            queueSummary: ClusterQueueSummary(totalJobCount: 53, pendingJobCount: 51),
+            resourceSummary: resources,
+            userRunningGPUByQOS: [:],
+            accountRunningGPUByQOS: [:],
+            scopedRunningGPUCount: 0,
+            scopedRunningNodeCount: 0,
+            configuredGPUCap: nil,
+            configuredNodeCap: nil,
+            now: Date(timeIntervalSince1970: 100),
+            message: nil
+        )
+
+        XCTAssertEqual(snapshot.primaryFreeResourceText, "Cluster free 24 GPU")
+        XCTAssertEqual(snapshot.summaryText, "Jobs 53 • Cluster free 24 GPU • Headroom 40 jobs")
+    }
+
+    func testClusterLoadSupportConfiguredGPUCapLimitsScopedHeadroom() {
+        let discovery = ClusterLoadDiscoveryContext(
+            accessiblePartitions: ["gpuhigh2"],
+            accessibleAccounts: ["research"],
+            preferredQOSOrder: ["normal"],
+            userGPUCapByQOS: [:],
+            accountGPUCapByQOS: [:],
+            maxRunningJobs: 40,
+            maxSubmittedJobs: 100,
+            limitsEnforced: true,
+            hasPartitionMetadata: true
+        )
+
+        let resources = ClusterLoadResourceSummary(
+            freeCPUCount: 926,
+            totalCPUCount: 1024,
+            freeGPUCount: 24,
+            totalGPUCount: 64,
+            freeNodeCount: 3,
+            totalNodeCount: 8
+        )
+
+        let snapshot = ClusterLoadSupport.makeSnapshot(
+            discovery: discovery,
+            currentJobs: [],
+            queueSummary: ClusterQueueSummary(totalJobCount: 53, pendingJobCount: 51),
+            resourceSummary: resources,
+            userRunningGPUByQOS: [:],
+            accountRunningGPUByQOS: [:],
+            scopedRunningGPUCount: 40,
+            scopedRunningNodeCount: 5,
+            configuredGPUCap: 40,
+            configuredNodeCap: nil,
+            now: Date(timeIntervalSince1970: 100),
+            message: nil
+        )
+
+        XCTAssertEqual(snapshot.primaryFreeResourceText, "Free 0 GPU")
+        XCTAssertEqual(snapshot.scopedDetailText, "Configured GPU cap GPU 0/40 free")
+        XCTAssertEqual(snapshot.summaryText, "Jobs 53 • Free 0 GPU • Headroom 40 jobs")
+        XCTAssertEqual(snapshot.level, .full)
+    }
+
+    func testClusterLoadSupportConfiguredNodeCapCanDeriveScopedGPUHeadroom() {
+        let discovery = ClusterLoadDiscoveryContext(
+            accessiblePartitions: ["gpuhigh2"],
+            accessibleAccounts: ["research"],
+            preferredQOSOrder: ["normal"],
+            userGPUCapByQOS: [:],
+            accountGPUCapByQOS: [:],
+            maxRunningJobs: nil,
+            maxSubmittedJobs: nil,
+            limitsEnforced: true,
+            hasPartitionMetadata: true
+        )
+
+        let resources = ClusterLoadResourceSummary(
+            freeCPUCount: 926,
+            totalCPUCount: 1024,
+            freeGPUCount: 24,
+            totalGPUCount: 64,
+            freeNodeCount: 3,
+            totalNodeCount: 8
+        )
+
+        let snapshot = ClusterLoadSupport.makeSnapshot(
+            discovery: discovery,
+            currentJobs: [],
+            queueSummary: ClusterQueueSummary(totalJobCount: 53, pendingJobCount: 51),
+            resourceSummary: resources,
+            userRunningGPUByQOS: [:],
+            accountRunningGPUByQOS: [:],
+            scopedRunningGPUCount: 40,
+            scopedRunningNodeCount: 5,
+            configuredGPUCap: nil,
+            configuredNodeCap: 5,
+            now: Date(timeIntervalSince1970: 100),
+            message: nil
+        )
+
+        XCTAssertEqual(snapshot.scopedFreeGPUCount, 0)
+        XCTAssertEqual(snapshot.scopedTotalGPUCount, 40)
+        XCTAssertEqual(snapshot.scopedFreeNodeCount, 0)
+        XCTAssertEqual(snapshot.scopedTotalNodeCount, 5)
+        XCTAssertEqual(snapshot.scopedDetailText, "Configured node cap GPU 0/40 free • Configured node cap nodes 0/5 free")
+    }
+
+    func testRunningGPUUsageByQOSMultipliesPerNodeGPUByNodeCount() {
+        let jobs = [
+            CurrentJob(
+                clusterID: ClusterID(rawValue: "alpha"),
+                jobID: "42",
+                jobName: "distributed",
+                owner: "u",
+                state: .running,
+                rawState: "RUNNING",
+                qosName: "normal",
+                gpuCount: 8,
+                nodeCount: 3
+            )
+        ]
+
+        XCTAssertEqual(ClusterLoadSupport.runningGPUUsageByQOS(jobs), ["normal": 24])
     }
 
     func testClusterLoadSupportParsesNodeTRESAndSelectsGPUTotals() {

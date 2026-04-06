@@ -156,6 +156,22 @@ struct SettingsView: View {
                 usesMonospacedFont: true
             )
 
+            SettingsOptionalIntegerRow(
+                title: "Usable GPU cap",
+                prompt: "optional",
+                text: cluster.usableGPUCap
+            )
+
+            SettingsOptionalIntegerRow(
+                title: "Usable node cap",
+                prompt: "optional",
+                text: cluster.usableNodeCap
+            )
+
+            Text("Optional caps override cluster-wide free counts when Slurm does not expose your account limit directly.")
+                .font(.system(.caption, design: .rounded))
+                .foregroundStyle(.secondary)
+
             if hasWatchedJobs {
                 Text("Unwatch this cluster's jobs before removing it.")
                     .font(.system(.caption, design: .rounded))
@@ -297,6 +313,25 @@ private struct SettingsStepperRow: View {
     }
 }
 
+private struct SettingsOptionalIntegerRow: View {
+    let title: String
+    let prompt: String
+    @Binding var text: String
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 18) {
+            Text(title)
+                .font(.system(.body, design: .rounded, weight: .medium))
+                .frame(width: 190, alignment: .leading)
+
+            TextField(prompt, text: $text)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
+                .frame(maxWidth: .infinity)
+        }
+    }
+}
+
 private struct SettingsDraft {
     var globalUsernameFilter: String = NSUserName()
     var pollIntervalSeconds: Double = 30
@@ -319,6 +354,8 @@ private struct ClusterDraft: Identifiable {
     var sshUsername: String
     var isEnabled: Bool
     var usernameOverride: String
+    var usableGPUCap: String
+    var usableNodeCap: String
 
     init(cluster: ClusterConfig) {
         id = cluster.id
@@ -327,6 +364,8 @@ private struct ClusterDraft: Identifiable {
         sshUsername = cluster.sshUsername
         isEnabled = cluster.isEnabled
         usernameOverride = cluster.usernameOverride
+        usableGPUCap = cluster.usableGPUCap.map(String.init) ?? ""
+        usableNodeCap = cluster.usableNodeCap.map(String.init) ?? ""
     }
 
     var asClusterConfig: ClusterConfig {
@@ -336,7 +375,9 @@ private struct ClusterDraft: Identifiable {
             sshAlias: sshAlias,
             sshUsername: sshUsername,
             isEnabled: isEnabled,
-            usernameOverride: usernameOverride
+            usernameOverride: usernameOverride,
+            usableGPUCap: parsedLimit(from: usableGPUCap),
+            usableNodeCap: parsedLimit(from: usableNodeCap)
         )
     }
 
@@ -344,5 +385,11 @@ private struct ClusterDraft: Identifiable {
         ClusterDraft(
             cluster: ClusterConfig.empty(named: "Cluster \(index)")
         )
+    }
+
+    private func parsedLimit(from rawValue: String) -> Int? {
+        let value = rawValue.trimmedOrEmpty
+        guard let parsed = Int(value), parsed > 0 else { return nil }
+        return parsed
     }
 }

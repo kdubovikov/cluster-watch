@@ -59,6 +59,9 @@ struct BrowseJobsSectionView: View {
                                             }
                                         }
                                     },
+                                    cancelAction: {
+                                        await store.cancel(job: job)
+                                    },
                                     watchAction: {
                                         store.watch(job: job)
                                     }
@@ -114,6 +117,9 @@ struct BrowseJobsSectionView: View {
 }
 
 private struct CurrentDependencyLinkedJobGroupView: View {
+    @State private var isConfirmingCancel = false
+    @State private var isCancelling = false
+
     let group: GroupedJobsViewModel.CurrentGroup
     let store: JobStore
     let allVisibleJobs: [CurrentJob]
@@ -135,7 +141,7 @@ private struct CurrentDependencyLinkedJobGroupView: View {
                     now: now,
                     displayStyle: .chain(depth: row.depth),
                     showsPrimaryAction: false,
-                    reservedTrailingInset: 22,
+                    reservedTrailingInset: groupHasCancellableJobs ? 48 : 22,
                     commandAction: {
                         Task {
                             if await store.prepareLaunchCommand(for: row.job) {
@@ -149,6 +155,9 @@ private struct CurrentDependencyLinkedJobGroupView: View {
                                 openLogTailWindow()
                             }
                         }
+                    },
+                    cancelAction: {
+                        await store.cancel(job: row.job)
                     },
                     watchAction: {
                         store.watch(job: row.job)
@@ -182,17 +191,31 @@ private struct CurrentDependencyLinkedJobGroupView: View {
                 .fill(Color.cyan.opacity(0.05))
         )
         .overlay(alignment: .topTrailing) {
-            Button {
-                store.watch(jobs: group.jobs)
-            } label: {
-                Image(systemName: "plus.circle")
-                    .accessibilityLabel("Watch Group")
+            HStack(spacing: 8) {
+                if groupHasCancellableJobs {
+                    InlineCancelActionView(
+                        isCompact: true,
+                        isConfirming: $isConfirmingCancel,
+                        isCancelling: $isCancelling,
+                        confirmLabel: "Cancel Group",
+                        action: {
+                            await store.cancel(jobs: cancellableJobs)
+                        }
+                    )
+                }
+
+                Button {
+                    store.watch(jobs: group.jobs)
+                } label: {
+                    Image(systemName: "plus.circle")
+                        .accessibilityLabel("Watch Group")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .help("Watch whole group")
             }
-            .buttonStyle(.borderless)
-            .controlSize(.small)
             .padding(.top, 10)
             .padding(.trailing, 14)
-            .help("Watch whole group")
         }
         .overlayPreferenceValue(CurrentDependencyRowFramePreferenceKey.self) { rows in
             CurrentDependencyChainOverlay(rows: rows)
@@ -232,6 +255,14 @@ private struct CurrentDependencyLinkedJobGroupView: View {
         }
 
         return lhs.jobID > rhs.jobID
+    }
+
+    private var cancellableJobs: [CurrentJob] {
+        group.jobs.filter { !$0.state.isTerminal }
+    }
+
+    private var groupHasCancellableJobs: Bool {
+        !cancellableJobs.isEmpty
     }
 }
 
@@ -305,6 +336,9 @@ private struct CurrentDependencyChainOverlay: View {
 }
 
 private struct BrowseJobRowView: View {
+    @State private var isConfirmingCancel = false
+    @State private var isCancelling = false
+
     enum DisplayStyle {
         case standalone
         case chain(depth: Int)
@@ -339,6 +373,7 @@ private struct BrowseJobRowView: View {
     var reservedTrailingInset: CGFloat = 0
     let commandAction: () -> Void
     let tailAction: () -> Void
+    let cancelAction: () async -> Bool
     let watchAction: () -> Void
 
     var body: some View {
@@ -471,6 +506,16 @@ private struct BrowseJobRowView: View {
                     .controlSize(.small)
                 }
 
+                if !job.state.isTerminal {
+                    InlineCancelActionView(
+                        isCompact: true,
+                        isConfirming: $isConfirmingCancel,
+                        isCancelling: $isCancelling,
+                        confirmLabel: "Cancel Job",
+                        action: cancelAction
+                    )
+                }
+
                 if showsPrimaryAction {
                     Button {
                         watchAction()
@@ -502,6 +547,16 @@ private struct BrowseJobRowView: View {
                     }
                     .buttonStyle(.borderless)
                     .controlSize(.small)
+                }
+
+                if !job.state.isTerminal {
+                    InlineCancelActionView(
+                        isCompact: false,
+                        isConfirming: $isConfirmingCancel,
+                        isCancelling: $isCancelling,
+                        confirmLabel: "Cancel Job",
+                        action: cancelAction
+                    )
                 }
 
                 if showsPrimaryAction {

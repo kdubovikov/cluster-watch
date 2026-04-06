@@ -285,6 +285,9 @@ public struct ClusterLoadSnapshot: Hashable, Sendable {
     public var scopedFreeGPUCount: Int?
     public var scopedTotalGPUCount: Int?
     public var scopedGPUDescription: String?
+    public var scopedFreeNodeCount: Int?
+    public var scopedTotalNodeCount: Int?
+    public var scopedNodeDescription: String?
     public var qosGPUAvailabilities: [ClusterQoSGPUAvailability]
     public var freeCPUCount: Int?
     public var totalCPUCount: Int?
@@ -304,6 +307,9 @@ public struct ClusterLoadSnapshot: Hashable, Sendable {
         scopedFreeGPUCount: Int? = nil,
         scopedTotalGPUCount: Int? = nil,
         scopedGPUDescription: String? = nil,
+        scopedFreeNodeCount: Int? = nil,
+        scopedTotalNodeCount: Int? = nil,
+        scopedNodeDescription: String? = nil,
         qosGPUAvailabilities: [ClusterQoSGPUAvailability] = [],
         freeCPUCount: Int? = nil,
         totalCPUCount: Int? = nil,
@@ -322,6 +328,9 @@ public struct ClusterLoadSnapshot: Hashable, Sendable {
         self.scopedFreeGPUCount = scopedFreeGPUCount
         self.scopedTotalGPUCount = scopedTotalGPUCount
         self.scopedGPUDescription = scopedGPUDescription?.trimmedOrEmpty.nilIfEmpty
+        self.scopedFreeNodeCount = scopedFreeNodeCount
+        self.scopedTotalNodeCount = scopedTotalNodeCount
+        self.scopedNodeDescription = scopedNodeDescription?.trimmedOrEmpty.nilIfEmpty
         self.qosGPUAvailabilities = qosGPUAvailabilities
         self.freeCPUCount = freeCPUCount
         self.totalCPUCount = totalCPUCount
@@ -343,14 +352,17 @@ public struct ClusterLoadSnapshot: Hashable, Sendable {
         if let scopedTotalGPUCount, scopedTotalGPUCount > 0, let scopedFreeGPUCount {
             return "Free \(scopedFreeGPUCount) GPU"
         }
+        if let scopedTotalNodeCount, scopedTotalNodeCount > 0, let scopedFreeNodeCount {
+            return "Free \(scopedFreeNodeCount) \(scopedFreeNodeCount == 1 ? "node" : "nodes")"
+        }
         if let totalGPUCount, totalGPUCount > 0, let freeGPUCount {
-            return "Free \(freeGPUCount) GPU"
+            return "Cluster free \(freeGPUCount) GPU"
         }
         if let totalCPUCount, totalCPUCount > 0, let freeCPUCount {
-            return "Free \(freeCPUCount) CPU"
+            return "Cluster free \(freeCPUCount) CPU"
         }
         if let totalNodeCount, totalNodeCount > 0, let freeNodeCount {
-            return "Free \(freeNodeCount) \(freeNodeCount == 1 ? "node" : "nodes")"
+            return "Cluster free \(freeNodeCount) \(freeNodeCount == 1 ? "node" : "nodes")"
         }
         return nil
     }
@@ -366,6 +378,29 @@ public struct ClusterLoadSnapshot: Hashable, Sendable {
         if let freeNodeCount, let totalNodeCount, totalNodeCount > 0 {
             parts.append("Nodes \(freeNodeCount)/\(totalNodeCount) free")
         }
+        return parts.isEmpty ? nil : parts.joined(separator: " • ")
+    }
+
+    public var scopedDetailText: String? {
+        var parts: [String] = []
+
+        if let scopedFreeGPUCount,
+           let scopedTotalGPUCount,
+           scopedTotalGPUCount > 0,
+           let scopedGPUDescription,
+           !scopedGPUDescription.isEmpty,
+           scopedGPUDescription != "All QoS" {
+            parts.append("\(scopedGPUDescription) GPU \(scopedFreeGPUCount)/\(scopedTotalGPUCount) free")
+        }
+
+        if let scopedFreeNodeCount,
+           let scopedTotalNodeCount,
+           scopedTotalNodeCount > 0,
+           let scopedNodeDescription,
+           !scopedNodeDescription.isEmpty {
+            parts.append("\(scopedNodeDescription) nodes \(scopedFreeNodeCount)/\(scopedTotalNodeCount) free")
+        }
+
         return parts.isEmpty ? nil : parts.joined(separator: " • ")
     }
 
@@ -503,6 +538,7 @@ public struct CurrentJob: Identifiable, Codable, Hashable, Sendable {
     public var dependencyIsActive: Bool
     public var qosName: String?
     public var gpuCount: Int?
+    public var nodeCount: Int?
 
     public init(
         clusterID: ClusterID,
@@ -519,7 +555,8 @@ public struct CurrentJob: Identifiable, Codable, Hashable, Sendable {
         dependencyJobIDs: [String] = [],
         dependencyIsActive: Bool = false,
         qosName: String? = nil,
-        gpuCount: Int? = nil
+        gpuCount: Int? = nil,
+        nodeCount: Int? = nil
     ) {
         self.clusterID = clusterID
         self.jobID = jobID
@@ -536,6 +573,7 @@ public struct CurrentJob: Identifiable, Codable, Hashable, Sendable {
         self.dependencyIsActive = dependencyIsActive
         self.qosName = qosName?.trimmedOrEmpty.nilIfEmpty
         self.gpuCount = gpuCount
+        self.nodeCount = nodeCount
     }
 
     public var id: String {
