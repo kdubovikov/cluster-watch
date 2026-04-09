@@ -695,6 +695,59 @@ final class JobStoreTests: XCTestCase {
         XCTAssertEqual(cancelRequests, ["cluster-alpha:50102,50103"])
     }
 
+    #if DEBUG
+    func testDemoModeUsesGenericFixtureData() async {
+        let store = JobStore(
+            persistence: InMemoryPersistenceStore(),
+            slurmClient: MockSlurmClient(currentResults: [:], historicalResults: [:]),
+            notificationManager: MockNotificationManager(),
+            pollingCoordinator: PollingCoordinator(),
+            nowProvider: { Date(timeIntervalSince1970: 1_000_000) },
+            initialState: PersistedAppState(
+                clusters: sampleClusters(),
+                globalUsernameFilter: "owner-a",
+                pollIntervalSeconds: 30,
+                watchedJobs: [],
+                reachabilityByCluster: [:],
+                isDemoDataEnabled: true
+            )
+        )
+
+        XCTAssertTrue(store.isDemoDataEnabled)
+        XCTAssertEqual(store.displayClusters.map(\.displayName), ["Demo Cluster Alpha", "Demo Cluster Beta", "Demo Cluster Gamma"])
+        XCTAssertTrue(store.visibleCurrentJobs.contains(where: { $0.jobName == "evaluate-suite-a2" }))
+        XCTAssertTrue(store.groupedWatchedJobs.flatMap(\.groups).flatMap(\.jobs).contains(where: { $0.jobName == "sync-catalog-g1" }))
+    }
+
+    func testDemoModeCancelDoesNotCallRealSlurmClient() async throws {
+        let client = MockSlurmClient(currentResults: [:], historicalResults: [:])
+        let store = JobStore(
+            persistence: InMemoryPersistenceStore(),
+            slurmClient: client,
+            notificationManager: MockNotificationManager(),
+            pollingCoordinator: PollingCoordinator(),
+            nowProvider: { Date(timeIntervalSince1970: 1_000_000) },
+            initialState: PersistedAppState(
+                clusters: sampleClusters(),
+                globalUsernameFilter: "owner-a",
+                pollIntervalSeconds: 30,
+                watchedJobs: [],
+                reachabilityByCluster: [:],
+                isDemoDataEnabled: true
+            )
+        )
+
+        let job = try XCTUnwrap(store.groupedWatchedJobs.flatMap(\.groups).flatMap(\.jobs).first(where: { $0.jobID == "910101" }))
+
+        let cancelled = await store.cancel(job: job)
+        let cancelRequests = await client.cancelRequests()
+
+        XCTAssertTrue(cancelled)
+        XCTAssertTrue(cancelRequests.isEmpty)
+        XCTAssertTrue(store.groupedWatchedJobs.flatMap(\.groups).flatMap(\.jobs).contains(where: { $0.jobID == "910101" && $0.state == .cancelled }))
+    }
+    #endif
+
     private func sampleClusters() -> [ClusterConfig] {
         [
             ClusterConfig(id: alphaClusterID, displayName: "Cluster Alpha", sshAlias: "alpha-login"),

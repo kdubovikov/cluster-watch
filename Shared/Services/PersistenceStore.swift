@@ -6,19 +6,22 @@ public struct PersistedAppState: Codable, Equatable, Sendable {
     public var pollIntervalSeconds: Double
     public var watchedJobs: [WatchedJob]
     public var reachabilityByCluster: [String: ClusterReachabilityState]
+    public var isDemoDataEnabled: Bool
 
     public init(
         clusters: [ClusterConfig],
         globalUsernameFilter: String,
         pollIntervalSeconds: Double,
         watchedJobs: [WatchedJob],
-        reachabilityByCluster: [String: ClusterReachabilityState]
+        reachabilityByCluster: [String: ClusterReachabilityState],
+        isDemoDataEnabled: Bool = false
     ) {
         self.clusters = clusters
         self.globalUsernameFilter = globalUsernameFilter
         self.pollIntervalSeconds = pollIntervalSeconds
         self.watchedJobs = watchedJobs
         self.reachabilityByCluster = reachabilityByCluster
+        self.isDemoDataEnabled = isDemoDataEnabled
     }
 
     public static func defaultState(localUsername: String = NSUserName()) -> PersistedAppState {
@@ -27,8 +30,28 @@ public struct PersistedAppState: Codable, Equatable, Sendable {
             globalUsernameFilter: localUsername,
             pollIntervalSeconds: 30,
             watchedJobs: [],
-            reachabilityByCluster: [:]
+            reachabilityByCluster: [:],
+            isDemoDataEnabled: false
         )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case clusters
+        case globalUsernameFilter
+        case pollIntervalSeconds
+        case watchedJobs
+        case reachabilityByCluster
+        case isDemoDataEnabled
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.clusters = try container.decode([ClusterConfig].self, forKey: .clusters)
+        self.globalUsernameFilter = try container.decode(String.self, forKey: .globalUsernameFilter)
+        self.pollIntervalSeconds = try container.decode(Double.self, forKey: .pollIntervalSeconds)
+        self.watchedJobs = try container.decode([WatchedJob].self, forKey: .watchedJobs)
+        self.reachabilityByCluster = try container.decode([String: ClusterReachabilityState].self, forKey: .reachabilityByCluster)
+        self.isDemoDataEnabled = try container.decodeIfPresent(Bool.self, forKey: .isDemoDataEnabled) ?? false
     }
 }
 

@@ -5,7 +5,7 @@ struct ClusterStatusIndicatorsView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            ForEach(store.clusters) { cluster in
+            ForEach(store.displayClusters) { cluster in
                 ClusterStatusIndicatorView(
                     cluster: cluster,
                     reachability: store.reachability(for: cluster.id)
@@ -104,7 +104,7 @@ struct ClusterLoadSectionView: View {
     let store: JobStore
 
     private var enabledClusters: [ClusterConfig] {
-        store.clusters.filter(\.isEnabled)
+        store.displayClusters.filter(\.isEnabled)
     }
 
     var body: some View {

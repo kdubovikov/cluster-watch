@@ -90,7 +90,7 @@ struct MenuBarRootView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .disabled(!store.watchedJobs.contains(where: { $0.isTerminal }))
+                    .disabled(!store.hasTerminalDisplayedWatchedJobs)
 
                     Button {
                         NSApp.activate(ignoringOtherApps: true)
@@ -108,16 +108,46 @@ struct MenuBarRootView: View {
     }
 }
 
-struct PanelSection<Content: View>: View {
+struct PanelSection<HeaderAccessory: View, Content: View>: View {
     let title: String
     let systemImage: String
-    @ViewBuilder var content: Content
+    let headerAccessory: HeaderAccessory
+    let content: Content
+
+    init(
+        title: String,
+        systemImage: String,
+        @ViewBuilder content: () -> Content
+    ) where HeaderAccessory == EmptyView {
+        self.title = title
+        self.systemImage = systemImage
+        self.headerAccessory = EmptyView()
+        self.content = content()
+    }
+
+    init(
+        title: String,
+        systemImage: String,
+        @ViewBuilder headerAccessory: () -> HeaderAccessory,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.headerAccessory = headerAccessory()
+        self.content = content()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(title, systemImage: systemImage)
-                .font(.system(.headline, design: .rounded, weight: .semibold))
-                .foregroundStyle(.primary)
+            HStack(alignment: .center, spacing: 10) {
+                Label(title, systemImage: systemImage)
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.primary)
+
+                Spacer(minLength: 12)
+
+                headerAccessory
+            }
 
             content
         }

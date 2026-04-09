@@ -28,6 +28,7 @@ swiftc \
   -sdk "$SDKROOT" \
   -target arm64-apple-macosx14.0 \
   -module-name ClusterWatch \
+  -D DEBUG \
   -emit-executable \
   -o "$EXECUTABLE_PATH" \
   "$ROOT_DIR/Cluster Watch/ClusterWatchApp.swift" \

@@ -2,6 +2,15 @@
 
 Cluster Watch is a native macOS menu bar app for monitoring Slurm jobs across any number of configured clusters. It keeps watched jobs pinned until you explicitly unwatch them, preserves last-known job state during outages, and sends one local notification when a watched job reaches a terminal state.
 
+<p align="center">
+  <a href="img/cw_screenshot_1.png">
+    <img src="img/cw_screenshot_1.png" alt="Cluster Watch watched jobs view" width="280" />
+  </a>
+  <a href="img/cw_screenshot_2.png">
+    <img src="img/cw_screenshot_2.png" alt="Cluster Watch settings and cluster management view" width="280" />
+  </a>
+</p>
+
 ## Features
 
 - Native SwiftUI menu bar app built with `MenuBarExtra`

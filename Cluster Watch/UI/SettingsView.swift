@@ -86,6 +86,19 @@ struct SettingsView: View {
                 range: 5...300,
                 step: 5
             )
+
+            #if DEBUG
+            Toggle(isOn: $draft.isDemoDataEnabled) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Demo data")
+                        .font(.system(.body, design: .rounded, weight: .medium))
+                    Text("Debug-only preview mode with generic clusters, jobs, logs, and load summaries.")
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.switch)
+            #endif
         }
     }
 
@@ -206,11 +219,20 @@ struct SettingsView: View {
             .buttonStyle(.bordered)
 
             Button("Save") {
+                #if DEBUG
+                store.applySettings(
+                    clusters: draft.clusters.map(\.asClusterConfig),
+                    globalUsernameFilter: draft.globalUsernameFilter,
+                    pollIntervalSeconds: draft.pollIntervalSeconds,
+                    isDemoDataEnabled: draft.isDemoDataEnabled
+                )
+                #else
                 store.applySettings(
                     clusters: draft.clusters.map(\.asClusterConfig),
                     globalUsernameFilter: draft.globalUsernameFilter,
                     pollIntervalSeconds: draft.pollIntervalSeconds
                 )
+                #endif
                 saveMessage = "Saved. Refreshing clusters…"
             }
             .buttonStyle(.borderedProminent)
@@ -336,6 +358,9 @@ private struct SettingsDraft {
     var globalUsernameFilter: String = NSUserName()
     var pollIntervalSeconds: Double = 30
     var clusters: [ClusterDraft] = []
+    #if DEBUG
+    var isDemoDataEnabled = false
+    #endif
 
     init() {}
 
@@ -344,6 +369,9 @@ private struct SettingsDraft {
         globalUsernameFilter = store.globalUsernameFilter
         pollIntervalSeconds = store.pollIntervalSeconds
         clusters = store.clusters.map(ClusterDraft.init(cluster:))
+        #if DEBUG
+        isDemoDataEnabled = store.isDemoDataEnabled
+        #endif
     }
 }
 

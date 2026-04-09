@@ -11,7 +11,22 @@ struct BrowseJobsSectionView: View {
         let groupedJobs = GroupedJobsViewModel.currentGroups(for: visibleJobs, maxDisplayedRows: 10)
         let displayedRowCount = groupedJobs.reduce(into: 0) { $0 += $1.rows.count }
 
-        PanelSection(title: "Browse Unwatched Jobs", systemImage: "magnifyingglass") {
+        PanelSection(
+            title: "Browse Unwatched Jobs",
+            systemImage: "magnifyingglass",
+            headerAccessory: {
+                if !visibleJobs.isEmpty {
+                    Button {
+                        store.watch(jobs: visibleJobs)
+                    } label: {
+                        Label("Watch All", systemImage: "plus")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Watch all currently visible unwatched jobs")
+                }
+            }
+        ) {
             VStack(alignment: .leading, spacing: 8) {
                 TextField("Search by job id, job name, or cluster", text: $store.browseSearchText)
                     .textFieldStyle(.roundedBorder)
