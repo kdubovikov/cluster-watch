@@ -58,8 +58,10 @@ public enum NormalizedJobState: String, Codable, Hashable, CaseIterable, Sendabl
             return "Pending"
         case .completed:
             return "Completed"
-        case .failed, .cancelled, .timeout, .outOfMemory, .nodeFail, .preempted:
+        case .failed, .timeout, .outOfMemory, .nodeFail, .preempted:
             return "Failed"
+        case .cancelled:
+            return "Cancelled"
         case .unknown:
             return "Unknown"
         }
@@ -189,6 +191,73 @@ public enum JobLaunchMode: String, Codable, CaseIterable, Hashable, Identifiable
         case .batchScript:
             return "Batch Script"
         }
+    }
+}
+
+public enum JobInspectorTab: String, Codable, CaseIterable, Hashable, Identifiable, Sendable {
+    case logs
+    case command
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .logs:
+            return "Logs"
+        case .command:
+            return "Command"
+        }
+    }
+}
+
+public struct JobInspectorSession: Hashable, Identifiable, Sendable {
+    public var clusterID: ClusterID
+    public var clusterName: String
+    public var jobID: String
+    public var jobName: String
+    public var logPaths: JobLogPaths?
+    public var preferredLogStream: JobLogStream
+    public var launchDetails: JobLaunchDetails?
+    public var preferredLaunchMode: JobLaunchMode
+    public var preferredTab: JobInspectorTab
+
+    public init(
+        clusterID: ClusterID,
+        clusterName: String,
+        jobID: String,
+        jobName: String,
+        logPaths: JobLogPaths? = nil,
+        preferredLogStream: JobLogStream = .stdout,
+        launchDetails: JobLaunchDetails? = nil,
+        preferredLaunchMode: JobLaunchMode = .command,
+        preferredTab: JobInspectorTab
+    ) {
+        self.clusterID = clusterID
+        self.clusterName = clusterName
+        self.jobID = jobID
+        self.jobName = jobName
+        self.logPaths = logPaths
+        self.preferredLogStream = preferredLogStream
+        self.launchDetails = launchDetails
+        self.preferredLaunchMode = preferredLaunchMode
+        self.preferredTab = preferredTab
+    }
+
+    public var id: String {
+        "\(clusterID.rawValue):\(jobID)"
+    }
+
+    public func path(for stream: JobLogStream) -> String? {
+        switch stream {
+        case .stdout:
+            return logPaths?.stdoutPath
+        case .stderr:
+            return logPaths?.stderrPath
+        }
+    }
+
+    public var availableStreams: [JobLogStream] {
+        JobLogStream.allCases.filter { path(for: $0) != nil }
     }
 }
 
@@ -769,6 +838,26 @@ public struct WatchedJob: Identifiable, Codable, Hashable, Sendable {
 
     public mutating func markStale() {
         isStale = true
+    }
+
+    public mutating func markMissingFromScheduler(at refreshedAt: Date) {
+        let hasMeaningfulChange =
+            state != .unknown
+            || rawState != "NOT_IN_QUEUE"
+            || pendingReason != nil
+            || dependencyIsActive
+            || isStale
+
+        state = .unknown
+        rawState = "NOT_IN_QUEUE"
+        pendingReason = nil
+        dependencyIsActive = false
+
+        if hasMeaningfulChange {
+            lastUpdatedAt = refreshedAt
+        }
+        lastSuccessfulRefreshAt = refreshedAt
+        isStale = false
     }
 
     public mutating func markRefreshed(at refreshedAt: Date) {

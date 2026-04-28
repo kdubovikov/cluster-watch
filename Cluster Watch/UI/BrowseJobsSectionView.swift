@@ -4,7 +4,6 @@ struct BrowseJobsSectionView: View {
     @Bindable var store: JobStore
     let now: Date
     let openLogTailWindow: () -> Void
-    let openLaunchCommandWindow: () -> Void
 
     var body: some View {
         let visibleJobs = store.visibleCurrentJobs
@@ -49,8 +48,7 @@ struct BrowseJobsSectionView: View {
                                     store: store,
                                     allVisibleJobs: visibleJobs,
                                     now: now,
-                                    openLogTailWindow: openLogTailWindow,
-                                    openLaunchCommandWindow: openLaunchCommandWindow
+                                    openLogTailWindow: openLogTailWindow
                                 )
                             } else if let job = group.jobs.first {
                                 BrowseJobRowView(
@@ -60,13 +58,6 @@ struct BrowseJobsSectionView: View {
                                     downstreamJobs: dependents(for: job, within: visibleJobs),
                                     hasDetectedLogPaths: job.state != .pending && store.logPaths(for: job)?.hasAnyPath == true,
                                     now: now,
-                                    commandAction: {
-                                        Task {
-                                            if await store.prepareLaunchCommand(for: job) {
-                                                openLaunchCommandWindow()
-                                            }
-                                        }
-                                    },
                                     tailAction: {
                                         Task {
                                             if await store.prepareLogTail(for: job) {
@@ -140,7 +131,6 @@ private struct CurrentDependencyLinkedJobGroupView: View {
     let allVisibleJobs: [CurrentJob]
     let now: Date
     let openLogTailWindow: () -> Void
-    let openLaunchCommandWindow: () -> Void
 
     var body: some View {
         let coordinateSpaceName = "current-dependency-group-\(group.id)"
@@ -157,13 +147,6 @@ private struct CurrentDependencyLinkedJobGroupView: View {
                     displayStyle: .chain(depth: row.depth),
                     showsPrimaryAction: false,
                     reservedTrailingInset: groupHasCancellableJobs ? 48 : 22,
-                    commandAction: {
-                        Task {
-                            if await store.prepareLaunchCommand(for: row.job) {
-                                openLaunchCommandWindow()
-                            }
-                        }
-                    },
                     tailAction: {
                         Task {
                             if await store.prepareLogTail(for: row.job) {
@@ -386,7 +369,6 @@ private struct BrowseJobRowView: View {
     var displayStyle: DisplayStyle = .standalone
     var showsPrimaryAction: Bool = true
     var reservedTrailingInset: CGFloat = 0
-    let commandAction: () -> Void
     let tailAction: () -> Void
     let cancelAction: () async -> Bool
     let watchAction: () -> Void
@@ -501,15 +483,6 @@ private struct BrowseJobRowView: View {
     private var actionButton: some View {
         if displayStyle.isChain {
             HStack(spacing: 8) {
-                Button {
-                    commandAction()
-                } label: {
-                    Image(systemName: "chevron.left.forwardslash.chevron.right")
-                        .accessibilityLabel("View launch command")
-                }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
-
                 if hasDetectedLogPaths {
                     Button {
                         tailAction()
@@ -544,15 +517,6 @@ private struct BrowseJobRowView: View {
             }
         } else {
             HStack(spacing: 8) {
-                Button {
-                    commandAction()
-                } label: {
-                    Image(systemName: "chevron.left.forwardslash.chevron.right")
-                        .accessibilityLabel("View launch command")
-                }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
-
                 if hasDetectedLogPaths {
                     Button {
                         tailAction()

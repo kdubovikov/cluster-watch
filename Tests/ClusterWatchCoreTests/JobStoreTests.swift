@@ -173,18 +173,18 @@ final class JobStoreTests: XCTestCase {
         XCTAssertEqual(store.watchedJobs[0].lastUpdatedAt, Date(timeIntervalSince1970: 200))
     }
 
-    func testMissingHistoricalRecordKeepsLastKnownStateButClearsStale() async {
+    func testMissingHistoricalRecordMarksWatchedJobUnknown() async {
         let initialJob = WatchedJob(
             clusterID: betaClusterID,
             jobID: "999",
             jobName: "wait-job",
             owner: "test-user",
-            state: .pending,
-            rawState: "PENDING",
+            state: .running,
+            rawState: "RUNNING",
             submitTime: Date(timeIntervalSince1970: 100),
-            startTime: nil,
+            startTime: Date(timeIntervalSince1970: 120),
             endTime: nil,
-            elapsedSeconds: nil,
+            elapsedSeconds: 240,
             firstSeenAt: Date(timeIntervalSince1970: 100),
             lastUpdatedAt: Date(timeIntervalSince1970: 120),
             lastSuccessfulRefreshAt: Date(timeIntervalSince1970: 120),
@@ -211,9 +211,11 @@ final class JobStoreTests: XCTestCase {
 
         await store.refreshCluster(id: betaClusterID)
 
-        XCTAssertEqual(store.watchedJobs[0].state, NormalizedJobState.pending)
+        XCTAssertEqual(store.watchedJobs[0].state, NormalizedJobState.unknown)
+        XCTAssertEqual(store.watchedJobs[0].rawState, "NOT_IN_QUEUE")
         XCTAssertFalse(store.watchedJobs[0].isStale)
-        XCTAssertEqual(store.watchedJobs[0].lastUpdatedAt, Date(timeIntervalSince1970: 120))
+        XCTAssertEqual(store.watchedJobs[0].lastUpdatedAt, Date(timeIntervalSince1970: 500))
+        XCTAssertEqual(store.watchedJobs[0].lastSuccessfulRefreshAt, Date(timeIntervalSince1970: 500))
     }
 
     func testSuccessfulRefreshPublishesClusterLoadSnapshot() async {
@@ -848,7 +850,7 @@ private actor MockSlurmClient: SlurmClientProtocol {
         return nil
     }
 
-    func tailLog(for cluster: ClusterConfig, remotePath: String, lineCount: Int) async throws -> String {
+    func tailLog(for cluster: ClusterConfig, remotePath: String, lineCount: Int, grepFilter: String?) async throws -> String {
         if let result = tailResults["\(cluster.id.rawValue):\(remotePath)"] {
             return try result.get()
         }

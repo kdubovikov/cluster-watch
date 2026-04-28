@@ -6,6 +6,7 @@ struct StateBadgeView: View {
         case pending
         case completed
         case failed
+        case cancelled
         case stale
         case neutral
 
@@ -19,6 +20,8 @@ struct StateBadgeView: View {
                 return .blue.opacity(0.95)
             case .failed:
                 return .red.opacity(0.95)
+            case .cancelled:
+                return .secondary.opacity(0.95)
             case .stale:
                 return .purple.opacity(0.95)
             case .neutral:
@@ -60,8 +63,10 @@ extension NormalizedJobState {
             return .pending
         case .completed:
             return .completed
-        case .failed, .cancelled, .timeout, .outOfMemory, .nodeFail, .preempted:
+        case .failed, .timeout, .outOfMemory, .nodeFail, .preempted:
             return .failed
+        case .cancelled:
+            return .cancelled
         case .unknown:
             return .neutral
         }

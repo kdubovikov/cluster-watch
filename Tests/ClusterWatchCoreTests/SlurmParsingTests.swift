@@ -43,11 +43,25 @@ final class SlurmParsingTests: XCTestCase {
         XCTAssertEqual(snapshot?.jobName, "train-model")
     }
 
+    func testParseHistoricalJobMatchesArrayElementAndIgnoresSteps() {
+        let output = """
+        153648_3|test-user|FAILED|array-task|2026-04-27T18:49:00|2026-04-27T18:58:00|2026-04-27T19:15:00|00:17:00|None
+        153648_3.batch|test-user|FAILED|batch|2026-04-27T18:49:00|2026-04-27T18:58:00|2026-04-27T19:15:00|00:17:00|None
+        """
+
+        let snapshot = SlurmParsing.parseHistoricalJob(output: output, clusterID: alphaClusterID, requestedJobID: "153648_3")
+
+        XCTAssertEqual(snapshot?.jobID, "153648_3")
+        XCTAssertEqual(snapshot?.state, .failed)
+        XCTAssertEqual(snapshot?.jobName, "array-task")
+    }
+
     func testStateNormalizationHandlesTerminalVariants() {
         XCTAssertEqual(NormalizedJobState(rawSlurmState: "CANCELLED by 1000"), .cancelled)
         XCTAssertEqual(NormalizedJobState(rawSlurmState: "OUT_OF_MEMORY"), .outOfMemory)
         XCTAssertEqual(NormalizedJobState(rawSlurmState: "NODE_FAIL"), .nodeFail)
         XCTAssertEqual(NormalizedJobState(rawSlurmState: "PREEMPTED"), .preempted)
+        XCTAssertEqual(NormalizedJobState.cancelled.badgeTitle, "Cancelled")
     }
 
     func testDependencyParserExtractsMultipleJobIDs() {

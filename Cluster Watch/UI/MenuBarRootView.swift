@@ -29,11 +29,7 @@ struct MenuBarRootView: View {
                                 now: context.date,
                                 openLogTailWindow: {
                                     NSApp.activate(ignoringOtherApps: true)
-                                    openWindow(id: "log-tail")
-                                },
-                                openLaunchCommandWindow: {
-                                    NSApp.activate(ignoringOtherApps: true)
-                                    openWindow(id: "launch-command")
+                                    openWindow(id: "job-inspector")
                                 }
                             )
                             BrowseJobsSectionView(
@@ -41,11 +37,7 @@ struct MenuBarRootView: View {
                                 now: context.date,
                                 openLogTailWindow: {
                                     NSApp.activate(ignoringOtherApps: true)
-                                    openWindow(id: "log-tail")
-                                },
-                                openLaunchCommandWindow: {
-                                    NSApp.activate(ignoringOtherApps: true)
-                                    openWindow(id: "launch-command")
+                                    openWindow(id: "job-inspector")
                                 }
                             )
                             ClusterLoadSectionView(store: store)
@@ -97,6 +89,14 @@ struct MenuBarRootView: View {
                         openWindow(id: "settings")
                     } label: {
                         Text("Settings")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button {
+                        NSApp.terminate(nil)
+                    } label: {
+                        Text("Quit")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)

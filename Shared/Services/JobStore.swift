@@ -9,8 +9,7 @@ public final class JobStore {
     public var pollIntervalSeconds: Double
     public var watchedJobs: [WatchedJob]
     public var browseSearchText: String = ""
-    public var activeLogTail: JobLogTailSession?
-    public var activeLaunchCommand: JobLaunchSession?
+    public var activeInspector: JobInspectorSession?
     public var isDemoDataEnabled: Bool
 
     public private(set) var currentJobsByCluster: [ClusterID: [CurrentJob]]
@@ -75,6 +74,48 @@ public final class JobStore {
             notificationManager: NotificationManager(),
             pollingCoordinator: PollingCoordinator(),
             initialState: initialState
+        )
+    }
+
+    public var activeLogTail: JobLogTailSession? {
+        guard let activeInspector,
+              let logPaths = activeInspector.logPaths,
+              logPaths.hasAnyPath else {
+            return nil
+        }
+
+        let preferredStream = activeInspector.availableStreams.contains(activeInspector.preferredLogStream)
+            ? activeInspector.preferredLogStream
+            : activeInspector.availableStreams.first ?? .stdout
+
+        return JobLogTailSession(
+            clusterID: activeInspector.clusterID,
+            clusterName: activeInspector.clusterName,
+            jobID: activeInspector.jobID,
+            jobName: activeInspector.jobName,
+            paths: logPaths,
+            preferredStream: preferredStream
+        )
+    }
+
+    public var activeLaunchCommand: JobLaunchSession? {
+        guard let activeInspector,
+              let launchDetails = activeInspector.launchDetails,
+              launchDetails.hasAnyContent else {
+            return nil
+        }
+
+        let preferredMode = launchDetails.availableModes.contains(activeInspector.preferredLaunchMode)
+            ? activeInspector.preferredLaunchMode
+            : launchDetails.preferredMode
+
+        return JobLaunchSession(
+            clusterID: activeInspector.clusterID,
+            clusterName: activeInspector.clusterName,
+            jobID: activeInspector.jobID,
+            jobName: activeInspector.jobName,
+            details: launchDetails,
+            preferredMode: preferredMode
         )
     }
 
@@ -192,8 +233,7 @@ public final class JobStore {
         #if DEBUG
         demoState = isDemoDataEnabled ? Self.makeDemoDataState(now: nowProvider()) : nil
         if isDemoDataEnabled {
-            activeLogTail = nil
-            activeLaunchCommand = nil
+            activeInspector = nil
         }
         #endif
         self.currentJobsByCluster = Self.normalizedCurrentJobs(from: currentJobsByCluster, clusterIDs: self.clusters.map(\.id))
@@ -361,13 +401,17 @@ public final class JobStore {
             return false
         }
 
-        activeLogTail = JobLogTailSession(
+        let details = launchDetails(for: job)
+        activeInspector = JobInspectorSession(
             clusterID: job.clusterID,
             clusterName: clusterName(for: job.clusterID),
             jobID: job.jobID,
             jobName: job.jobName,
-            paths: paths,
-            preferredStream: preferredStream
+            logPaths: paths,
+            preferredLogStream: preferredStream,
+            launchDetails: details,
+            preferredLaunchMode: details?.preferredMode ?? .command,
+            preferredTab: .logs
         )
         return true
     }
@@ -380,57 +424,125 @@ public final class JobStore {
             return false
         }
 
-        activeLogTail = JobLogTailSession(
+        let details = launchDetails(for: job)
+        activeInspector = JobInspectorSession(
             clusterID: job.clusterID,
             clusterName: clusterName(for: job.clusterID),
             jobID: job.jobID,
             jobName: job.jobName,
-            paths: paths,
-            preferredStream: preferredStream
+            logPaths: paths,
+            preferredLogStream: preferredStream,
+            launchDetails: details,
+            preferredLaunchMode: details?.preferredMode ?? .command,
+            preferredTab: .logs
         )
         return true
     }
 
     public func prepareLaunchCommand(for job: CurrentJob) async -> Bool {
         let details = await fetchLaunchDetails(clusterID: job.clusterID, jobID: job.jobID) ?? JobLaunchDetails()
+        let paths = logPaths(for: job)
 
-        activeLaunchCommand = JobLaunchSession(
+        activeInspector = JobInspectorSession(
             clusterID: job.clusterID,
             clusterName: clusterName(for: job.clusterID),
             jobID: job.jobID,
             jobName: job.jobName,
-            details: details,
-            preferredMode: details.preferredMode
+            logPaths: paths,
+            preferredLogStream: paths.flatMap { preferredLogStream(for: $0) } ?? .stdout,
+            launchDetails: details,
+            preferredLaunchMode: details.preferredMode,
+            preferredTab: .command
         )
         return true
     }
 
     public func prepareLaunchCommand(for job: WatchedJob) async -> Bool {
         let details = await fetchLaunchDetails(clusterID: job.clusterID, jobID: job.jobID) ?? JobLaunchDetails()
+        let paths = logPaths(for: job)
 
-        activeLaunchCommand = JobLaunchSession(
+        activeInspector = JobInspectorSession(
             clusterID: job.clusterID,
             clusterName: clusterName(for: job.clusterID),
             jobID: job.jobID,
             jobName: job.jobName,
-            details: details,
-            preferredMode: details.preferredMode
+            logPaths: paths,
+            preferredLogStream: paths.flatMap { preferredLogStream(for: $0) } ?? .stdout,
+            launchDetails: details,
+            preferredLaunchMode: details.preferredMode,
+            preferredTab: .command
         )
         return true
     }
 
     public func closeActiveLogTail() {
-        activeLogTail = nil
+        activeInspector = nil
     }
 
     public func closeActiveLaunchCommand() {
-        activeLaunchCommand = nil
+        activeInspector = nil
+    }
+
+    public func ensureActiveInspectorLogPaths() async -> JobLogPaths? {
+        guard var session = activeInspector else { return nil }
+
+        if let logPaths = session.logPaths, logPaths.hasAnyPath {
+            return logPaths
+        }
+
+        await prefetchLogPaths(clusterID: session.clusterID, jobID: session.jobID)
+        guard let logPaths = effectiveLogPathsByJobKey[jobKey(clusterID: session.clusterID, jobID: session.jobID)],
+              logPaths.hasAnyPath else {
+            return nil
+        }
+
+        session.logPaths = logPaths
+        if session.preferredLogStream != .stderr || logPaths.stdoutPath == nil {
+            session.preferredLogStream = preferredLogStream(for: logPaths) ?? .stdout
+        }
+        activeInspector = session
+        return logPaths
+    }
+
+    public func ensureActiveInspectorLaunchDetails() async -> JobLaunchDetails? {
+        guard var session = activeInspector else { return nil }
+
+        if let details = session.launchDetails, details.hasAnyContent {
+            return details
+        }
+
+        let details = await fetchLaunchDetails(clusterID: session.clusterID, jobID: session.jobID) ?? JobLaunchDetails()
+        guard details.hasAnyContent else { return nil }
+
+        session.launchDetails = details
+        session.preferredLaunchMode = details.preferredMode
+        activeInspector = session
+        return details
+    }
+
+    public func updateActiveInspectorPreferredTab(_ tab: JobInspectorTab) {
+        guard var session = activeInspector else { return }
+        session.preferredTab = tab
+        activeInspector = session
+    }
+
+    public func updateActiveInspectorPreferredLogStream(_ stream: JobLogStream) {
+        guard var session = activeInspector else { return }
+        session.preferredLogStream = stream
+        activeInspector = session
+    }
+
+    public func updateActiveInspectorPreferredLaunchMode(_ mode: JobLaunchMode) {
+        guard var session = activeInspector else { return }
+        session.preferredLaunchMode = mode
+        activeInspector = session
     }
 
     public func tailLog(
         session: JobLogTailSession,
         stream: JobLogStream,
-        lineCount: Int = 200
+        lineCount: Int = 200,
+        grepFilter: String? = nil
     ) async throws -> String {
         #if DEBUG
         if isDemoDataEnabled {
@@ -444,7 +556,46 @@ public final class JobStore {
             throw SlurmClientError.invalidConfiguration("No \(stream.title.lowercased()) path available.")
         }
 
-        return try await slurmClient.tailLog(for: cluster, remotePath: path, lineCount: lineCount)
+        return try await slurmClient.tailLog(
+            for: cluster,
+            remotePath: path,
+            lineCount: lineCount,
+            grepFilter: grepFilter
+        )
+    }
+
+    public func tailLog(
+        session: JobInspectorSession,
+        stream: JobLogStream,
+        lineCount: Int = 200,
+        grepFilter: String? = nil
+    ) async throws -> String {
+        #if DEBUG
+        if isDemoDataEnabled {
+            let tailSession = JobLogTailSession(
+                clusterID: session.clusterID,
+                clusterName: session.clusterName,
+                jobID: session.jobID,
+                jobName: session.jobName,
+                paths: session.logPaths ?? JobLogPaths(),
+                preferredStream: session.preferredLogStream
+            )
+            return demoState?.tailOutput(for: tailSession, stream: stream, lineCount: lineCount) ?? ""
+        }
+        #endif
+        guard let cluster = clusters.first(where: { $0.id == session.clusterID }) else {
+            throw SlurmClientError.invalidConfiguration("Cluster configuration not found.")
+        }
+        guard let path = session.path(for: stream) else {
+            throw SlurmClientError.invalidConfiguration("No \(stream.title.lowercased()) path available.")
+        }
+
+        return try await slurmClient.tailLog(
+            for: cluster,
+            remotePath: path,
+            lineCount: lineCount,
+            grepFilter: grepFilter
+        )
     }
 
     public func clusterName(for clusterID: ClusterID) -> String {
@@ -768,6 +919,8 @@ public final class JobStore {
                     let wasTerminal = updatedJobs[index].isTerminal
                     updatedJobs[index].apply(snapshot: historical, refreshedAt: refreshedAt)
                     markNotificationIfNeeded(job: &updatedJobs[index], wasTerminal: wasTerminal, notifications: &notifications)
+                } else {
+                    updatedJobs[index].markMissingFromScheduler(at: refreshedAt)
                 }
             } catch {
                 continue

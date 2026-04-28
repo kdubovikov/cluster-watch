@@ -4,7 +4,6 @@ struct WatchedJobsSectionView: View {
     let store: JobStore
     let now: Date
     let openLogTailWindow: () -> Void
-    let openLaunchCommandWindow: () -> Void
 
     var body: some View {
         PanelSection(title: "Watched Jobs", systemImage: "eye") {
@@ -31,8 +30,7 @@ struct WatchedJobsSectionView: View {
                                             group: group,
                                             store: store,
                                             now: now,
-                                            openLogTailWindow: openLogTailWindow,
-                                            openLaunchCommandWindow: openLaunchCommandWindow
+                                            openLogTailWindow: openLogTailWindow
                                         )
                                     } else if let job = group.jobs.first {
                                         WatchedJobRowView(
@@ -42,13 +40,6 @@ struct WatchedJobsSectionView: View {
                                             downstreamJobs: store.watchedDependents(for: job),
                                             hasDetectedLogPaths: job.state != .pending && store.logPaths(for: job)?.hasAnyPath == true,
                                             now: now,
-                                            commandAction: {
-                                                Task {
-                                                    if await store.prepareLaunchCommand(for: job) {
-                                                        openLaunchCommandWindow()
-                                                    }
-                                                }
-                                            },
                                             tailAction: {
                                                 Task {
                                                     if await store.prepareLogTail(for: job) {
@@ -88,7 +79,6 @@ private struct DependencyLinkedJobGroupView: View {
     let store: JobStore
     let now: Date
     let openLogTailWindow: () -> Void
-    let openLaunchCommandWindow: () -> Void
 
     var body: some View {
         let coordinateSpaceName = "dependency-group-\(group.id)"
@@ -105,13 +95,6 @@ private struct DependencyLinkedJobGroupView: View {
                     displayStyle: .chain(depth: row.depth),
                     showsPrimaryAction: false,
                     reservedTrailingInset: groupHasCancellableJobs ? 48 : 22,
-                    commandAction: {
-                        Task {
-                            if await store.prepareLaunchCommand(for: row.job) {
-                                openLaunchCommandWindow()
-                            }
-                        }
-                    },
                     tailAction: {
                         Task {
                             if await store.prepareLogTail(for: row.job) {

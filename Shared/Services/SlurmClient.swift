@@ -6,7 +6,7 @@ public protocol SlurmClientProtocol: Sendable {
     func fetchLogPaths(for cluster: ClusterConfig, jobID: String) async throws -> JobLogPaths?
     func fetchLaunchDetails(for cluster: ClusterConfig, jobID: String) async throws -> JobLaunchDetails?
     func fetchClusterLoad(for cluster: ClusterConfig, username: String, currentJobs: [CurrentJob]) async throws -> ClusterLoadSnapshot
-    func tailLog(for cluster: ClusterConfig, remotePath: String, lineCount: Int) async throws -> String
+    func tailLog(for cluster: ClusterConfig, remotePath: String, lineCount: Int, grepFilter: String?) async throws -> String
     func cancelJob(for cluster: ClusterConfig, jobID: String) async throws
     func cancelJobs(for cluster: ClusterConfig, jobIDs: [String]) async throws
 }
@@ -45,7 +45,7 @@ public actor SlurmClient: SlurmClientProtocol {
             throw SlurmClientError.invalidConfiguration("Missing SSH alias for \(cluster.displayName).")
         }
 
-        let remoteCommand = "squeue -h -u \(shellEscape(username)) -o '\(SlurmParsing.squeueFormat)'"
+        let remoteCommand = "squeue -h --array -u \(shellEscape(username)) -o '\(SlurmParsing.squeueFormat)'"
         let output = try await runSSH(destination: cluster.effectiveSSHDestination, remoteCommand: remoteCommand)
         let parsedJobs = SlurmParsing.parseCurrentJobs(output: output, clusterID: cluster.id)
         let effectiveOffset = await resolveTimestampOffset(for: cluster, jobs: parsedJobs, now: Date())
@@ -57,7 +57,7 @@ public actor SlurmClient: SlurmClientProtocol {
             throw SlurmClientError.invalidConfiguration("Missing SSH alias for \(cluster.displayName).")
         }
 
-        let remoteCommand = "sacct -n -P -j \(shellEscape(jobID)) --format=\(SlurmParsing.sacctFormat)"
+        let remoteCommand = "sacct -n -P --array -j \(shellEscape(jobID)) --format=\(SlurmParsing.sacctFormat)"
         let output = try await runSSH(destination: cluster.effectiveSSHDestination, remoteCommand: remoteCommand)
         let snapshot = SlurmParsing.parseHistoricalJob(output: output, clusterID: cluster.id, requestedJobID: jobID)
         return Self.applyingTimestampOffset(timestampOffsetByCluster[cluster.id], to: snapshot)
@@ -83,7 +83,7 @@ public actor SlurmClient: SlurmClientProtocol {
 
         let sacctOutput = try await runSSH(
             destination: cluster.effectiveSSHDestination,
-            remoteCommand: "sacct -n -P --expand-patterns -j \(shellEscape(jobID)) --format=\(SlurmParsing.sacctLogFormat)"
+            remoteCommand: "sacct -n -P --array --expand-patterns -j \(shellEscape(jobID)) --format=\(SlurmParsing.sacctLogFormat)"
         )
         if let logPaths = SlurmParsing.parseHistoricalLogPaths(output: sacctOutput, requestedJobID: jobID),
            logPaths.hasAnyPath {
@@ -206,15 +206,32 @@ public actor SlurmClient: SlurmClientProtocol {
         )
     }
 
-    public func tailLog(for cluster: ClusterConfig, remotePath: String, lineCount: Int) async throws -> String {
+    public func tailLog(
+        for cluster: ClusterConfig,
+        remotePath: String,
+        lineCount: Int,
+        grepFilter: String?
+    ) async throws -> String {
         guard !cluster.effectiveSSHDestination.isEmpty else {
             throw SlurmClientError.invalidConfiguration("Missing SSH alias for \(cluster.displayName).")
         }
 
-        let safeLineCount = max(1, lineCount)
+        let visibleLineCount = max(1, lineCount)
+        let pattern = grepFilter?.trimmedOrEmpty ?? ""
+        let remoteCommand: String
+
+        if pattern.isEmpty {
+            remoteCommand = "LC_ALL=C tail -n \(visibleLineCount) -- \(shellEscape(remotePath))"
+        } else {
+            let searchLineCount = max(visibleLineCount * 10, 2_000)
+            remoteCommand = """
+            (LC_ALL=C tail -n \(searchLineCount) -- \(shellEscape(remotePath)) | perl -pe 's/\\r/\\n/g' | grep -Ei -- \(shellEscape(pattern)) || true) | tail -n \(visibleLineCount)
+            """
+        }
+
         return try await runSSH(
             destination: cluster.effectiveSSHDestination,
-            remoteCommand: "LC_ALL=C tail -n \(safeLineCount) -- \(shellEscape(remotePath))"
+            remoteCommand: remoteCommand
         )
     }
 

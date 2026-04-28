@@ -36,7 +36,6 @@ struct WatchedJobRowView: View {
     var displayStyle: DisplayStyle = .standalone
     var showsPrimaryAction: Bool = true
     var reservedTrailingInset: CGFloat = 0
-    let commandAction: () -> Void
     let tailAction: () -> Void
     let cancelAction: () async -> Bool
     let unwatchAction: () -> Void
@@ -121,15 +120,6 @@ struct WatchedJobRowView: View {
                 }
 
                 Spacer()
-
-                Button {
-                    commandAction()
-                } label: {
-                    Image(systemName: "chevron.left.forwardslash.chevron.right")
-                        .accessibilityLabel("View launch command")
-                }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
 
                 if hasDetectedLogPaths {
                     Button {

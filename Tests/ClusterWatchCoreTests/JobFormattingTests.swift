@@ -56,4 +56,25 @@ final class JobFormattingTests: XCTestCase {
             command
         )
     }
+
+    func testUnknownWatchedJobDoesNotFormatAsStillRunning() {
+        let job = WatchedJob(
+            clusterID: ClusterID(rawValue: "alpha"),
+            jobID: "999",
+            jobName: "missing",
+            owner: "user",
+            state: .unknown,
+            rawState: "NOT_IN_QUEUE",
+            startTime: Date(timeIntervalSince1970: 100),
+            elapsedSeconds: 240,
+            firstSeenAt: Date(timeIntervalSince1970: 0),
+            lastUpdatedAt: Date(timeIntervalSince1970: 200),
+            lastSuccessfulRefreshAt: Date(timeIntervalSince1970: 200)
+        )
+
+        XCTAssertEqual(
+            JobFormatting.timingSummary(for: job, now: Date(timeIntervalSince1970: 500)),
+            "Wait unknown • Last ran 4m 0s"
+        )
+    }
 }

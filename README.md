@@ -162,13 +162,13 @@ Local job-finish notifications also depend on macOS notification permissions. If
 Current jobs are queried with `squeue`, using a machine-readable format similar to:
 
 ```sh
-ssh mycluster "squeue -h -u <username> -o '%i|%u|%T|%j|%V|%S|%M|%E|%r'"
+ssh mycluster "squeue -h --array -u <username> -o '%i|%u|%T|%j|%V|%S|%M|%E|%r'"
 ```
 
 Watched jobs that disappear from `squeue` are checked with `sacct`:
 
 ```sh
-ssh mycluster "sacct -n -P -j <jobid> --format=JobIDRaw,User,State,JobName,Submit,Start,End,Elapsed,Reason"
+ssh mycluster "sacct -n -P --array -j <jobid> --format=JobIDRaw,User,State,JobName,Submit,Start,End,Elapsed,Reason"
 ```
 
 The parser prefers the primary row matching the raw/base job ID and ignores step rows such as `.batch` and `.extern`. Dependency data comes from:
@@ -181,7 +181,7 @@ Log path detection and tailing use Slurm metadata when available:
 
 ```sh
 ssh mycluster "scontrol show job <jobid>"
-ssh mycluster "sacct -n -P --expand-patterns -j <jobid> --format=JobIDRaw,StdOut,StdErr,WorkDir"
+ssh mycluster "sacct -n -P --array --expand-patterns -j <jobid> --format=JobIDRaw,StdOut,StdErr,WorkDir"
 ```
 
 When a log path is available, the app tails the remote file with SSH using a command equivalent to:

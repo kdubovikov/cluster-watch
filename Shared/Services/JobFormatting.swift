@@ -245,6 +245,13 @@ public enum JobFormatting {
         isTerminal: Bool,
         now: Date
     ) -> String {
+        if state == .unknown {
+            if let elapsedSeconds, elapsedSeconds > 0 {
+                return "Last ran \(durationText(elapsedSeconds))"
+            }
+            return "Run unknown"
+        }
+
         if let startTime {
             if let endTime {
                 return "Ran \(durationText(max(0, endTime.timeIntervalSince(startTime))))"
