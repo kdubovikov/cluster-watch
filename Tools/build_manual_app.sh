@@ -17,12 +17,19 @@ rm -rf "$ROOT_DIR/build-manual"
 mkdir -p "$MACOS_DIR" "$FRAMEWORKS_DIR"
 cp "$ROOT_DIR/Cluster Watch/Info.plist" "$PLIST_PATH"
 
-/usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string Cluster Watch" "$PLIST_PATH"
-/usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.kirilldubovikov.ClusterWatch.manual" "$PLIST_PATH"
-/usr/libexec/PlistBuddy -c "Add :CFBundleName string Cluster Watch" "$PLIST_PATH"
-/usr/libexec/PlistBuddy -c "Add :CFBundlePackageType string APPL" "$PLIST_PATH"
-/usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 1.0" "$PLIST_PATH"
-/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string 1" "$PLIST_PATH"
+set_plist_string() {
+  local key="$1"
+  local value="$2"
+  /usr/libexec/PlistBuddy -c "Set :$key $value" "$PLIST_PATH" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :$key string $value" "$PLIST_PATH"
+}
+
+set_plist_string "CFBundleExecutable" "Cluster Watch"
+set_plist_string "CFBundleIdentifier" "com.kirilldubovikov.ClusterWatch.manual"
+set_plist_string "CFBundleName" "Cluster Watch"
+set_plist_string "CFBundlePackageType" "APPL"
+set_plist_string "CFBundleShortVersionString" "0.5.0"
+set_plist_string "CFBundleVersion" "5"
 
 swiftc \
   -sdk "$SDKROOT" \
