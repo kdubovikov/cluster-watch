@@ -28,8 +28,8 @@ set_plist_string "CFBundleExecutable" "Cluster Watch"
 set_plist_string "CFBundleIdentifier" "com.kirilldubovikov.ClusterWatch.manual"
 set_plist_string "CFBundleName" "Cluster Watch"
 set_plist_string "CFBundlePackageType" "APPL"
-set_plist_string "CFBundleShortVersionString" "0.5.0"
-set_plist_string "CFBundleVersion" "5"
+set_plist_string "CFBundleShortVersionString" "0.5.1"
+set_plist_string "CFBundleVersion" "6"
 
 swiftc \
   -sdk "$SDKROOT" \

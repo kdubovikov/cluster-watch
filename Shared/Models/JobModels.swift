@@ -122,7 +122,67 @@ public enum JobDependencyStatus: String, Codable, Hashable, Sendable {
 
 public enum JobIdentifier {
     public static func baseID(for jobID: String) -> String {
-        jobID.split(separator: ".").first.map(String.init) ?? jobID
+        let withoutStep = jobID.split(separator: ".").first.map(String.init) ?? jobID
+        if let rangeStart = withoutStep.range(of: "_[") {
+            return String(withoutStep[..<rangeStart.lowerBound])
+        }
+        if let bracketStart = withoutStep.firstIndex(of: "[") {
+            return String(withoutStep[..<bracketStart])
+        }
+        return withoutStep
+    }
+
+    public static func schedulerLookupID(for jobID: String) -> String {
+        let trimmed = jobID.trimmedOrEmpty
+        guard !trimmed.isEmpty else { return trimmed }
+
+        if trimmed.contains("_[") || trimmed.contains("[") {
+            return baseID(for: trimmed)
+        }
+
+        return trimmed.split(separator: ".").first.map(String.init) ?? trimmed
+    }
+
+    public static func arrayParentID(for jobID: String) -> String {
+        let baseID = baseID(for: jobID)
+        guard let underscore = baseID.lastIndex(of: "_") else { return baseID }
+
+        let suffixStart = baseID.index(after: underscore)
+        let suffix = baseID[suffixStart...]
+        guard !suffix.isEmpty, suffix.allSatisfy(\.isNumber) else { return baseID }
+        return String(baseID[..<underscore])
+    }
+
+    public static func arrayTaskID(for jobID: String) -> Int? {
+        let baseID = baseID(for: jobID)
+        guard let underscore = baseID.lastIndex(of: "_") else { return nil }
+
+        let suffixStart = baseID.index(after: underscore)
+        let suffix = baseID[suffixStart...]
+        guard !suffix.isEmpty, suffix.allSatisfy(\.isNumber) else { return nil }
+        return Int(suffix)
+    }
+
+    public static func arrayTaskIDs(for jobID: String) -> Set<Int>? {
+        guard let openBracket = jobID.firstIndex(of: "["),
+              let closeBracket = jobID[openBracket...].firstIndex(of: "]") else {
+            return nil
+        }
+
+        let rawExpression = String(jobID[jobID.index(after: openBracket)..<closeBracket])
+        let rangeExpression = rawExpression.split(separator: "%", maxSplits: 1).first.map(String.init) ?? rawExpression
+        let taskIDs = rangeExpression
+            .split(separator: ",")
+            .reduce(into: Set<Int>()) { taskIDs, token in
+                let bounds = token.split(separator: "-", maxSplits: 1)
+                if bounds.count == 2, let lower = Int(bounds[0]), let upper = Int(bounds[1]), lower <= upper {
+                    taskIDs.formUnion(lower...upper)
+                } else if bounds.count == 1, let taskID = Int(bounds[0]) {
+                    taskIDs.insert(taskID)
+                }
+            }
+
+        return taskIDs.isEmpty ? nil : taskIDs
     }
 }
 

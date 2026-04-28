@@ -56,6 +56,30 @@ final class SlurmParsingTests: XCTestCase {
         XCTAssertEqual(snapshot?.jobName, "array-task")
     }
 
+    func testParseHistoricalJobMatchesBracketedArrayRangeToTaskRow() {
+        let output = """
+        153648_0|test-user|FAILED|outside-range|2026-04-27T14:39:11|2026-04-27T14:48:56|2026-04-27T15:35:59|00:47:03|Dependency
+        153648_4|test-user|COMPLETED|inside-range|2026-04-27T14:39:11|2026-04-27T15:16:44|2026-04-27T16:03:53|00:47:09|AssocGrpGRES
+        153648_4.batch|test-user|COMPLETED|batch|2026-04-27T15:16:44|2026-04-27T15:16:44|2026-04-27T16:03:53|00:47:09|
+        """
+
+        let snapshot = SlurmParsing.parseHistoricalJob(output: output, clusterID: alphaClusterID, requestedJobID: "153648_[4-7%8]")
+
+        XCTAssertEqual(snapshot?.jobID, "153648_4")
+        XCTAssertEqual(snapshot?.state, .completed)
+        XCTAssertEqual(snapshot?.jobName, "inside-range")
+    }
+
+    func testSchedulerLookupIDStripsOnlyBracketedArrayRanges() {
+        XCTAssertEqual(JobIdentifier.schedulerLookupID(for: "153648_[4-7%8]"), "153648")
+        XCTAssertEqual(JobIdentifier.schedulerLookupID(for: "153648[4-7]"), "153648")
+        XCTAssertEqual(JobIdentifier.schedulerLookupID(for: "153648_3"), "153648_3")
+        XCTAssertEqual(JobIdentifier.schedulerLookupID(for: "153648.batch"), "153648")
+        XCTAssertEqual(JobIdentifier.arrayParentID(for: "153648_3.batch"), "153648")
+        XCTAssertEqual(JobIdentifier.arrayTaskID(for: "153648_3.batch"), 3)
+        XCTAssertEqual(JobIdentifier.arrayTaskIDs(for: "153648_[4-7%8]"), Set([4, 5, 6, 7]))
+    }
+
     func testStateNormalizationHandlesTerminalVariants() {
         XCTAssertEqual(NormalizedJobState(rawSlurmState: "CANCELLED by 1000"), .cancelled)
         XCTAssertEqual(NormalizedJobState(rawSlurmState: "OUT_OF_MEMORY"), .outOfMemory)

@@ -57,7 +57,8 @@ public actor SlurmClient: SlurmClientProtocol {
             throw SlurmClientError.invalidConfiguration("Missing SSH alias for \(cluster.displayName).")
         }
 
-        let remoteCommand = "sacct -n -P --array -j \(shellEscape(jobID)) --format=\(SlurmParsing.sacctFormat)"
+        let lookupJobID = JobIdentifier.schedulerLookupID(for: jobID)
+        let remoteCommand = "sacct -n -P --array -j \(shellEscape(lookupJobID)) --format=\(SlurmParsing.sacctFormat)"
         let output = try await runSSH(destination: cluster.effectiveSSHDestination, remoteCommand: remoteCommand)
         let snapshot = SlurmParsing.parseHistoricalJob(output: output, clusterID: cluster.id, requestedJobID: jobID)
         return Self.applyingTimestampOffset(timestampOffsetByCluster[cluster.id], to: snapshot)
@@ -71,7 +72,7 @@ public actor SlurmClient: SlurmClientProtocol {
         do {
             let scontrolOutput = try await runSSH(
                 destination: cluster.effectiveSSHDestination,
-                remoteCommand: "scontrol show job \(shellEscape(jobID))"
+                remoteCommand: "scontrol show job \(shellEscape(JobIdentifier.schedulerLookupID(for: jobID)))"
             )
             if let logPaths = SlurmParsing.parseScontrolLogPaths(output: scontrolOutput),
                logPaths.hasAnyPath {
@@ -83,7 +84,7 @@ public actor SlurmClient: SlurmClientProtocol {
 
         let sacctOutput = try await runSSH(
             destination: cluster.effectiveSSHDestination,
-            remoteCommand: "sacct -n -P --array --expand-patterns -j \(shellEscape(jobID)) --format=\(SlurmParsing.sacctLogFormat)"
+            remoteCommand: "sacct -n -P --array --expand-patterns -j \(shellEscape(JobIdentifier.schedulerLookupID(for: jobID))) --format=\(SlurmParsing.sacctLogFormat)"
         )
         if let logPaths = SlurmParsing.parseHistoricalLogPaths(output: sacctOutput, requestedJobID: jobID),
            logPaths.hasAnyPath {
@@ -103,7 +104,7 @@ public actor SlurmClient: SlurmClientProtocol {
         do {
             let scontrolOutput = try await runSSH(
                 destination: cluster.effectiveSSHDestination,
-                remoteCommand: "scontrol show job \(shellEscape(jobID))"
+                remoteCommand: "scontrol show job \(shellEscape(JobIdentifier.schedulerLookupID(for: jobID)))"
             )
             if let parsed = SlurmParsing.parseScontrolLaunchDetails(output: scontrolOutput) {
                 details.commandText = parsed.commandText
@@ -116,7 +117,7 @@ public actor SlurmClient: SlurmClientProtocol {
         do {
             let batchScriptOutput = try await runSSH(
                 destination: cluster.effectiveSSHDestination,
-                remoteCommand: "scontrol write batch_script \(shellEscape(jobID)) -"
+                remoteCommand: "scontrol write batch_script \(shellEscape(JobIdentifier.schedulerLookupID(for: jobID))) -"
             )
             details.batchScriptText = SlurmParsing.parseBatchScript(output: batchScriptOutput)
         } catch {

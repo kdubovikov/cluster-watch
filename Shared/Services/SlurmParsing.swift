@@ -2,8 +2,8 @@ import Foundation
 
 public enum SlurmParsing {
     public static let squeueFormat = "%i|%u|%T|%j|%V|%S|%M|%E|%r|%q|%D|%b"
-    public static let sacctFormat = "JobIDRaw,User,State,JobName,Submit,Start,End,Elapsed,Reason"
-    public static let sacctLogFormat = "JobIDRaw,StdOut,StdErr,WorkDir"
+    public static let sacctFormat = "JobID,User,State,JobName,Submit,Start,End,Elapsed,Reason"
+    public static let sacctLogFormat = "JobID,StdOut,StdErr,WorkDir"
 
     public static func parseCurrentJobs(output: String, clusterID: ClusterID) -> [CurrentJob] {
         output
@@ -21,8 +21,7 @@ public enum SlurmParsing {
             return exact.snapshot
         }
 
-        let requestedBase = baseJobID(for: requestedJobID)
-        return rows.first(where: { baseJobID(for: $0.jobID) == requestedBase })?.snapshot
+        return firstMatchingRow(in: rows, requestedJobID: requestedJobID)?.snapshot
     }
 
     public static func parseHistoricalLogPaths(output: String, requestedJobID: String) -> JobLogPaths? {
@@ -35,8 +34,7 @@ public enum SlurmParsing {
             return exact.logPaths
         }
 
-        let requestedBase = baseJobID(for: requestedJobID)
-        return rows.first(where: { baseJobID(for: $0.jobID) == requestedBase })?.logPaths
+        return firstMatchingRow(in: rows, requestedJobID: requestedJobID)?.logPaths
     }
 
     public static func parseScontrolLogPaths(output: String) -> JobLogPaths? {
@@ -135,7 +133,24 @@ public enum SlurmParsing {
     }
 
     private static func baseJobID(for jobID: String) -> String {
-        jobID.split(separator: ".").first.map(String.init) ?? jobID
+        JobIdentifier.baseID(for: jobID)
+    }
+
+    private static func firstMatchingRow<Row: JobIdentifiable>(in rows: [Row], requestedJobID: String) -> Row? {
+        let requestedBase = JobIdentifier.baseID(for: requestedJobID)
+        let requestedParentID = JobIdentifier.arrayParentID(for: requestedJobID)
+        if let requestedTaskIDs = JobIdentifier.arrayTaskIDs(for: requestedJobID),
+           let arrayTask = rows.first(where: {
+               JobIdentifier.arrayParentID(for: $0.jobID) == requestedParentID
+                   && JobIdentifier.arrayTaskID(for: $0.jobID).map(requestedTaskIDs.contains) == true
+           }) {
+            return arrayTask
+        }
+
+        return rows.first(where: {
+            baseJobID(for: $0.jobID) == requestedBase
+                || JobIdentifier.arrayParentID(for: $0.jobID) == requestedParentID
+        })
     }
 
     private static func fieldValue(_ field: String, in output: String) -> String? {
@@ -209,7 +224,11 @@ public enum SlurmParsing {
         return counts.reduce(0, +)
     }
 
-    private struct HistoricalRow {
+    private protocol JobIdentifiable {
+        var jobID: String { get }
+    }
+
+    private struct HistoricalRow: JobIdentifiable {
         var jobID: String
         var owner: String
         var rawState: String
@@ -241,7 +260,7 @@ public enum SlurmParsing {
         }
     }
 
-    private struct HistoricalLogRow {
+    private struct HistoricalLogRow: JobIdentifiable {
         var jobID: String
         var stdoutPath: String
         var stderrPath: String
