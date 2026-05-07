@@ -107,7 +107,12 @@ struct WatchedJobRowView: View {
             }
 
             HStack {
-                if let lastRefresh = job.lastSuccessfulRefreshAt {
+                if let terminalAgeText = JobFormatting.terminalAgeText(for: job, now: now) {
+                    Text(terminalAgeText)
+                        .font(.system(size: 11, weight: .regular, design: .rounded))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                } else if let lastRefresh = job.lastSuccessfulRefreshAt {
                     Text("Updated \(JobFormatting.absoluteDateText(lastRefresh))")
                         .font(.system(size: 11, weight: .regular, design: .rounded))
                         .foregroundStyle(.tertiary)

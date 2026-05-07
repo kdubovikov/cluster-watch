@@ -87,6 +87,14 @@ public enum JobFormatting {
         return dateTimeFormatter.string(from: date)
     }
 
+    public static func terminalAgeText(for job: WatchedJob, now: Date) -> String? {
+        guard job.isTerminal else { return nil }
+
+        let referenceDate = job.endTime ?? job.lastUpdatedAt
+
+        return "Finished \(durationText(max(0, now.timeIntervalSince(referenceDate)))) ago"
+    }
+
     public static func formattedLaunchContent(_ content: String, mode: JobLaunchMode) -> String {
         switch mode {
         case .command:
