@@ -22,7 +22,7 @@ struct MenuBarRootView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     header
 
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                    TimelineView(.periodic(from: .now, by: store.timelineTickIntervalSeconds)) { context in
                         VStack(alignment: .leading, spacing: 12) {
                             WatchedJobsSectionView(
                                 store: store,
@@ -83,6 +83,15 @@ struct MenuBarRootView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .disabled(!store.hasTerminalDisplayedWatchedJobs)
+
+                    Button {
+                        NSApp.activate(ignoringOtherApps: true)
+                        openWindow(id: "dashboard")
+                    } label: {
+                        Text("Dashboard")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
 
                     Button {
                         NSApp.activate(ignoringOtherApps: true)

@@ -31,6 +31,8 @@ public final class JobStore {
     @ObservationIgnored private var refreshingClusterIDs: Set<ClusterID> = []
     @ObservationIgnored private var fetchingLogPathJobKeys: Set<String> = []
     @ObservationIgnored private var fetchingLaunchDetailsJobKeys: Set<String> = []
+    @ObservationIgnored private var watchedRelationsCache: WatchedRelationsCache?
+    @ObservationIgnored private var groupedWatchedSectionsCache: GroupedWatchedSectionsCache?
 
     public init(
         persistence: any PersistenceStoring,
@@ -120,7 +122,33 @@ public final class JobStore {
     }
 
     public var groupedWatchedJobs: [GroupedJobsViewModel.Section] {
-        GroupedJobsViewModel.sections(for: effectiveWatchedJobs, referenceDate: nowProvider())
+        let jobs = effectiveWatchedJobs
+        let referenceDay = Calendar.current.startOfDay(for: nowProvider())
+
+        if let cache = groupedWatchedSectionsCache,
+           cache.jobs == jobs,
+           cache.referenceDay == referenceDay {
+            return cache.sections
+        }
+
+        let sections = GroupedJobsViewModel.sections(for: jobs, referenceDate: referenceDay)
+        groupedWatchedSectionsCache = GroupedWatchedSectionsCache(
+            jobs: jobs,
+            referenceDay: referenceDay,
+            sections: sections
+        )
+        return sections
+    }
+
+    public var timelineTickIntervalSeconds: TimeInterval {
+        let watchedCount = effectiveWatchedJobs.count
+        if watchedCount >= 250 {
+            return 5
+        }
+        if watchedCount >= 100 {
+            return 2
+        }
+        return 1
     }
 
     public var visibleCurrentJobs: [CurrentJob] {
@@ -611,27 +639,23 @@ public final class JobStore {
     }
 
     public func watchedDependencies(for job: WatchedJob) -> [WatchedJob] {
-        effectiveWatchedJobs
-            .filter { $0.clusterID == job.clusterID && $0.id != job.id && job.depends(on: $0.jobID) }
-            .sorted(by: compareWatchedJobs)
+        watchedRelations().dependenciesByWatchedJobID[job.id] ?? []
     }
 
     public func watchedDependents(for job: WatchedJob) -> [WatchedJob] {
-        effectiveWatchedJobs
-            .filter { $0.clusterID == job.clusterID && $0.id != job.id && $0.depends(on: job.jobID) }
-            .sorted(by: compareWatchedJobs)
+        watchedRelations().dependentsByLookupKey[jobKey(clusterID: job.clusterID, jobID: job.jobID)] ?? []
     }
 
     public func watchedDependencies(for job: CurrentJob) -> [WatchedJob] {
-        effectiveWatchedJobs
-            .filter { $0.clusterID == job.clusterID && job.depends(on: $0.jobID) }
+        let relations = watchedRelations()
+        return job.dependencyJobIDs
+            .compactMap { relations.jobByLookupKey[jobKey(clusterID: job.clusterID, jobID: JobIdentifier.baseID(for: $0))] }
+            .uniqued(by: \.id)
             .sorted(by: compareWatchedJobs)
     }
 
     public func watchedDependents(for job: CurrentJob) -> [WatchedJob] {
-        effectiveWatchedJobs
-            .filter { $0.clusterID == job.clusterID && $0.depends(on: job.jobID) }
-            .sorted(by: compareWatchedJobs)
+        watchedRelations().dependentsByLookupKey[jobKey(clusterID: job.clusterID, jobID: job.jobID)] ?? []
     }
 
     public func refreshAll() async {
@@ -1078,6 +1102,48 @@ public final class JobStore {
         return lhs.jobID > rhs.jobID
     }
 
+    private func watchedRelations() -> WatchedRelationsCache {
+        let jobs = effectiveWatchedJobs
+
+        if let cache = watchedRelationsCache, cache.jobs == jobs {
+            return cache
+        }
+
+        let jobByLookupKey = Dictionary(
+            uniqueKeysWithValues: jobs.map { (jobKey(clusterID: $0.clusterID, jobID: $0.jobID), $0) }
+        )
+
+        var dependenciesByWatchedJobID: [String: [WatchedJob]] = [:]
+        var dependentsByLookupKey: [String: [WatchedJob]] = [:]
+
+        for job in jobs {
+            let dependencyJobs = job.dependencyJobIDs
+                .compactMap { jobByLookupKey[jobKey(clusterID: job.clusterID, jobID: JobIdentifier.baseID(for: $0))] }
+                .uniqued(by: \.id)
+                .sorted(by: compareWatchedJobs)
+
+            dependenciesByWatchedJobID[job.id] = dependencyJobs
+
+            for dependency in dependencyJobs {
+                let lookupKey = jobKey(clusterID: dependency.clusterID, jobID: dependency.jobID)
+                dependentsByLookupKey[lookupKey, default: []].append(job)
+            }
+        }
+
+        for key in dependentsByLookupKey.keys {
+            dependentsByLookupKey[key] = dependentsByLookupKey[key]?.sorted(by: compareWatchedJobs)
+        }
+
+        let cache = WatchedRelationsCache(
+            jobs: jobs,
+            jobByLookupKey: jobByLookupKey,
+            dependenciesByWatchedJobID: dependenciesByWatchedJobID,
+            dependentsByLookupKey: dependentsByLookupKey
+        )
+        watchedRelationsCache = cache
+        return cache
+    }
+
     #if DEBUG
     private func refreshDemoData() {
         demoState?.refresh(now: nowProvider())
@@ -1087,6 +1153,36 @@ public final class JobStore {
         DemoDataState.make(now: now)
     }
     #endif
+}
+
+private struct GroupedWatchedSectionsCache {
+    let jobs: [WatchedJob]
+    let referenceDay: Date
+    let sections: [GroupedJobsViewModel.Section]
+}
+
+private struct WatchedRelationsCache {
+    let jobs: [WatchedJob]
+    let jobByLookupKey: [String: WatchedJob]
+    let dependenciesByWatchedJobID: [String: [WatchedJob]]
+    let dependentsByLookupKey: [String: [WatchedJob]]
+}
+
+private extension Sequence {
+    func uniqued<Value: Hashable>(by keyPath: KeyPath<Element, Value>) -> [Element] {
+        var seen = Set<Value>()
+        var result: [Element] = []
+        result.reserveCapacity(underestimatedCount)
+
+        for element in self {
+            let key = element[keyPath: keyPath]
+            if seen.insert(key).inserted {
+                result.append(element)
+            }
+        }
+
+        return result
+    }
 }
 
 #if DEBUG

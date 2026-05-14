@@ -6,6 +6,7 @@ struct ClusterWatchApp: App {
     private enum WindowID {
         static let settings = "settings"
         static let jobInspector = "job-inspector"
+        static let dashboard = "dashboard"
     }
 
     @State private var store: JobStore
@@ -34,10 +35,26 @@ struct ClusterWatchApp: App {
             JobInspectorWindowView(store: store)
         }
         .defaultSize(width: 900, height: 620)
+
+        Window("Cluster Watch Dashboard", id: WindowID.dashboard) {
+            DashboardWindowView(store: store)
+        }
+        .defaultSize(width: 1520, height: 920)
+        .windowResizability(.contentMinSize)
     }
 }
 
 private struct JobInspectorWindowView: View {
+    @Bindable var store: JobStore
+
+    var body: some View {
+        JobInspectorContentView(store: store)
+            .frame(minWidth: 860, minHeight: 560)
+            .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+private struct JobInspectorContentView: View {
     private enum InspectorPrimarySelection: String, CaseIterable, Identifiable {
         case stdout
         case stderr
@@ -95,8 +112,6 @@ private struct JobInspectorWindowView: View {
                 .padding(24)
             }
         }
-        .frame(minWidth: 860, minHeight: 560)
-        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private func content(for session: JobInspectorSession) -> some View {
@@ -561,6 +576,165 @@ private struct JobInspectorWindowView: View {
                 }
             }
         )
+    }
+}
+
+private struct DashboardWindowView: View {
+    @Bindable var store: JobStore
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color.cyan.opacity(0.14),
+                    Color.mint.opacity(0.08),
+                    Color.clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 12) {
+                header
+
+                TimelineView(.periodic(from: .now, by: store.timelineTickIntervalSeconds)) { context in
+                    dashboardContent(now: context.date)
+                }
+            }
+            .padding(16)
+        }
+        .frame(minWidth: 1380, minHeight: 860)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .background(
+            WindowConfigurator { window in
+                window.styleMask.formUnion([.titled, .closable, .miniaturizable, .resizable])
+                window.collectionBehavior.formUnion([.managed, .fullScreenPrimary, .fullScreenAllowsTiling])
+                window.tabbingMode = .disallowed
+                window.titleVisibility = .visible
+                window.standardWindowButton(.zoomButton)?.isEnabled = true
+            }
+        )
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Cluster Watch Dashboard")
+                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                    Text("Live watched-job monitoring with an embedded inspector for a dedicated display.")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 16)
+
+                HStack(spacing: 8) {
+                    Button {
+                        Task {
+                            await store.refreshAll()
+                        }
+                    } label: {
+                        Text("Refresh")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button {
+                        store.clearCompleted()
+                    } label: {
+                        Text("Clear Completed")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!store.hasTerminalDisplayedWatchedJobs)
+
+                    Button {
+                        NSApp.activate(ignoringOtherApps: true)
+                        openWindow(id: "settings")
+                    } label: {
+                        Text("Settings")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button {
+                        NSApp.keyWindow?.toggleFullScreen(nil)
+                    } label: {
+                        Text(fullScreenButtonTitle)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+            }
+
+            ClusterStatusIndicatorsView(store: store)
+        }
+    }
+
+    private func dashboardContent(now: Date) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 12) {
+                ClusterLoadSectionView(store: store)
+                Spacer(minLength: 0)
+            }
+            .frame(width: 340)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    WatchedJobsSectionView(
+                        store: store,
+                        now: now,
+                        openLogTailWindow: {}
+                    )
+                    BrowseJobsSectionView(
+                        store: store,
+                        now: now,
+                        openLogTailWindow: {}
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            PanelSection(title: "Job Inspector", systemImage: "doc.text.magnifyingglass") {
+                JobInspectorContentView(store: store)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .frame(width: 560)
+            .frame(maxHeight: .infinity, alignment: .top)
+        }
+    }
+
+    private var fullScreenButtonTitle: String {
+        if NSApp.keyWindow?.styleMask.contains(.fullScreen) == true {
+            return "Exit Full Screen"
+        }
+        return "Full Screen"
+    }
+}
+
+private struct WindowConfigurator: NSViewRepresentable {
+    let configure: (NSWindow) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        NSView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let window = nsView.window, context.coordinator.configuredWindow !== window {
+            context.coordinator.configuredWindow = window
+            configure(window)
+        }
+    }
+
+    final class Coordinator {
+        weak var configuredWindow: NSWindow?
     }
 }
 
