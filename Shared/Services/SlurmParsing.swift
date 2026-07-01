@@ -3,7 +3,7 @@ import Foundation
 public enum SlurmParsing {
     public static let squeueFormat = "%i|%u|%T|%j|%V|%S|%M|%E|%r|%q|%D|%b"
     public static let sacctFormat = "JobID,User,State,JobName,Submit,Start,End,Elapsed,Reason"
-    public static let sacctLogFormat = "JobID,StdOut,StdErr,WorkDir"
+    public static let sacctLogFormat = "JobID,JobName,StdOut,StdErr,WorkDir,NodeList"
 
     public static func parseCurrentJobs(output: String, clusterID: ClusterID) -> [CurrentJob] {
         output
@@ -41,8 +41,18 @@ public enum SlurmParsing {
         let stdoutPath = fieldValue("StdOut", in: output)
         let stderrPath = fieldValue("StdErr", in: output)
         let workDirectory = fieldValue("WorkDir", in: output)
+        let context = LogPathResolutionContext(
+            jobID: fieldValue("JobId", in: output),
+            jobName: fieldValue("JobName", in: output),
+            batchHost: fieldValue("BatchHost", in: output),
+            nodeList: fieldValue("NodeList", in: output)
+        )
 
-        let logPaths = JobLogPaths(stdoutPath: stdoutPath, stderrPath: stderrPath, workDirectory: workDirectory)
+        let logPaths = JobLogPaths(
+            stdoutPath: resolvedLogPath(stdoutPath, context: context),
+            stderrPath: resolvedLogPath(stderrPath, context: context),
+            workDirectory: workDirectory
+        )
         return logPaths.hasAnyPath || logPaths.workDirectory != nil ? logPaths : nil
     }
 
@@ -113,14 +123,29 @@ public enum SlurmParsing {
     }
 
     private static func parseHistoricalLogRow(_ row: String) -> HistoricalLogRow? {
-        let parts = splitColumns(row, expectedCount: 4)
-        guard parts.count == 4 else { return nil }
+        let parts = splitColumns(row, expectedCount: 6)
+        guard parts.count == 4 || parts.count == 6 else { return nil }
+
+        if parts.count == 6 {
+            return HistoricalLogRow(
+                jobID: parts[0],
+                jobName: parts[1],
+                stdoutPath: parts[2],
+                stderrPath: parts[3],
+                workDirectory: parts[4],
+                nodeList: parts[5],
+                shouldResolvePatterns: true
+            )
+        }
 
         return HistoricalLogRow(
             jobID: parts[0],
+            jobName: nil,
             stdoutPath: parts[1],
             stderrPath: parts[2],
-            workDirectory: parts[3]
+            workDirectory: parts[3],
+            nodeList: nil,
+            shouldResolvePatterns: false
         )
     }
 
@@ -204,6 +229,115 @@ public enum SlurmParsing {
         return value
     }
 
+    private static func resolvedLogPath(_ rawValue: String?, context: LogPathResolutionContext) -> String? {
+        guard let rawValue,
+              let path = parseToken(rawValue) else {
+            return nil
+        }
+
+        let resolved = resolveSlurmFilenamePattern(path, context: context)
+        return resolved.hasUnresolvedPattern ? nil : resolved.value
+    }
+
+    private static func resolveSlurmFilenamePattern(
+        _ value: String,
+        context: LogPathResolutionContext
+    ) -> FilenamePatternResolution {
+        var output = ""
+        var index = value.startIndex
+        var hasUnresolvedPattern = false
+
+        while index < value.endIndex {
+            let character = value[index]
+            guard character == "%" else {
+                output.append(character)
+                index = value.index(after: index)
+                continue
+            }
+
+            let tokenStart = index
+            index = value.index(after: index)
+            guard index < value.endIndex else {
+                output.append("%")
+                break
+            }
+
+            if value[index] == "%" {
+                output.append("%")
+                index = value.index(after: index)
+                continue
+            }
+
+            var widthText = ""
+            while index < value.endIndex, value[index].isNumber {
+                widthText.append(value[index])
+                index = value.index(after: index)
+            }
+
+            guard index < value.endIndex else {
+                output.append(String(value[tokenStart...]))
+                break
+            }
+
+            let code = value[index]
+            index = value.index(after: index)
+
+            guard let replacement = filenamePatternReplacement(for: code, context: context) else {
+                let token = String(value[tokenStart..<index])
+                output.append(token)
+                if isKnownFilenamePatternCode(code) {
+                    hasUnresolvedPattern = true
+                }
+                continue
+            }
+
+            output.append(paddedFilenamePatternReplacement(replacement, widthText: widthText))
+        }
+
+        return FilenamePatternResolution(value: output, hasUnresolvedPattern: hasUnresolvedPattern)
+    }
+
+    private static func filenamePatternReplacement(
+        for code: Character,
+        context: LogPathResolutionContext
+    ) -> String? {
+        switch code {
+        case "A":
+            return context.arrayParentID
+        case "a":
+            return context.arrayTaskID
+        case "b":
+            return context.arrayTaskID.flatMap(Int.init).map { String($0 % 10) }
+        case "j":
+            return context.jobID
+        case "N":
+            return context.nodeName
+        case "u":
+            return context.username
+        case "x":
+            return context.jobName
+        default:
+            return nil
+        }
+    }
+
+    private static func isKnownFilenamePatternCode(_ code: Character) -> Bool {
+        switch code {
+        case "A", "a", "b", "J", "j", "N", "n", "s", "t", "u", "x":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func paddedFilenamePatternReplacement(_ replacement: String, widthText: String) -> String {
+        guard let width = Int(widthText), width > replacement.count else {
+            return replacement
+        }
+
+        return String(repeating: "0", count: width - replacement.count) + replacement
+    }
+
     private static func parseGRESGPUCount(_ rawValue: String) -> Int? {
         let value = rawValue.trimmedOrEmpty
         guard !value.isEmpty else { return nil }
@@ -262,16 +396,91 @@ public enum SlurmParsing {
 
     private struct HistoricalLogRow: JobIdentifiable {
         var jobID: String
+        var jobName: String?
         var stdoutPath: String
         var stderrPath: String
         var workDirectory: String
+        var nodeList: String?
+        var shouldResolvePatterns: Bool
 
         var logPaths: JobLogPaths {
-            JobLogPaths(
-                stdoutPath: stdoutPath,
-                stderrPath: stderrPath,
+            guard shouldResolvePatterns else {
+                return JobLogPaths(
+                    stdoutPath: stdoutPath,
+                    stderrPath: stderrPath,
+                    workDirectory: workDirectory
+                )
+            }
+
+            let context = LogPathResolutionContext(
+                jobID: jobID,
+                jobName: jobName,
+                batchHost: nil,
+                nodeList: nodeList
+            )
+
+            return JobLogPaths(
+                stdoutPath: resolvedLogPath(stdoutPath, context: context),
+                stderrPath: resolvedLogPath(stderrPath, context: context),
                 workDirectory: workDirectory
             )
+        }
+    }
+
+    private struct FilenamePatternResolution {
+        var value: String
+        var hasUnresolvedPattern: Bool
+    }
+
+    private struct LogPathResolutionContext {
+        var jobID: String?
+        var jobName: String?
+        var batchHost: String?
+        var nodeList: String?
+
+        var arrayParentID: String? {
+            jobID.map(JobIdentifier.arrayParentID(for:))
+        }
+
+        var arrayTaskID: String? {
+            jobID.flatMap(JobIdentifier.arrayTaskID(for:)).map(String.init)
+        }
+
+        var nodeName: String? {
+            shortNodeName(from: batchHost) ?? shortNodeName(from: firstNodeName(from: nodeList))
+        }
+
+        var username: String? {
+            nil
+        }
+
+        private func shortNodeName(from rawValue: String?) -> String? {
+            guard let rawValue,
+                  let value = SlurmParsing.parseToken(rawValue) else {
+                return nil
+            }
+
+            return value.split(separator: ".", maxSplits: 1).first.map(String.init)
+        }
+
+        private func firstNodeName(from rawValue: String?) -> String? {
+            guard let rawValue,
+                  let value = SlurmParsing.parseToken(rawValue) else {
+                return nil
+            }
+
+            guard let openBracket = value.firstIndex(of: "["),
+                  let closeBracket = value[openBracket...].firstIndex(of: "]") else {
+                return value.split(separator: ",", maxSplits: 1).first.map(String.init) ?? value
+            }
+
+            let prefix = String(value[..<openBracket])
+            let rangeExpression = value[value.index(after: openBracket)..<closeBracket]
+            let firstRange = rangeExpression.split(separator: ",", maxSplits: 1).first.map(String.init) ?? ""
+            let firstNodeSuffix = firstRange.split(separator: "-", maxSplits: 1).first.map(String.init) ?? firstRange
+            guard !firstNodeSuffix.isEmpty else { return nil }
+
+            return prefix + firstNodeSuffix
         }
     }
 }

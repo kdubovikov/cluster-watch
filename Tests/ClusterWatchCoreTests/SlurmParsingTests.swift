@@ -111,6 +111,63 @@ final class SlurmParsingTests: XCTestCase {
         XCTAssertEqual(logPaths?.workDirectory, "/home/test-user/project")
     }
 
+    func testParseScontrolLogPathsResolvesBatchHostFilenamePattern() {
+        let output = """
+        JobId=833509 JobName=q3-14b-sft-wr
+           UserId=test-user(1001) GroupId=test-group(1001) MCS_label=N/A
+           BatchHost=gpu042
+           NodeList=gpu[042-043]
+           WorkDir=/home/test-user/project
+           StdErr=/home/test-user/project/logs/%x-%j-%N.err
+           StdIn=/dev/null
+           StdOut=/home/test-user/project/logs/%x-%j-%N.out
+        """
+
+        let logPaths = SlurmParsing.parseScontrolLogPaths(output: output)
+
+        XCTAssertEqual(logPaths?.stdoutPath, "/home/test-user/project/logs/q3-14b-sft-wr-833509-gpu042.out")
+        XCTAssertEqual(logPaths?.stderrPath, "/home/test-user/project/logs/q3-14b-sft-wr-833509-gpu042.err")
+    }
+
+    func testParseScontrolLogPathsResolvesHyphenatedBatchHostFilenamePattern() {
+        let output = """
+        JobId=83522 JobName=multinode-train
+           UserId=test-user(2046) GroupId=test-group(2000) MCS_label=N/A
+           JobState=RUNNING Reason=None Dependency=(null)
+           NodeList=cluster-gpu-[314-315]
+           BatchHost=cluster-gpu-314
+           WorkDir=/remote/users/test-user/project
+           StdErr=/remote/users/test-user/project/logs/multinode-train-83522-%N.err
+           StdIn=/dev/null
+           StdOut=/remote/users/test-user/project/logs/multinode-train-83522-%N.out
+        """
+
+        let logPaths = SlurmParsing.parseScontrolLogPaths(output: output)
+
+        XCTAssertEqual(
+            logPaths?.stdoutPath,
+            "/remote/users/test-user/project/logs/multinode-train-83522-cluster-gpu-314.out"
+        )
+        XCTAssertEqual(
+            logPaths?.stderrPath,
+            "/remote/users/test-user/project/logs/multinode-train-83522-cluster-gpu-314.err"
+        )
+    }
+
+    func testParseScontrolLogPathsDropsUnresolvedNodePatterns() {
+        let output = """
+        JobId=833509 JobName=q3-14b-sft-wr
+           UserId=test-user(1001) GroupId=test-group(1001) MCS_label=N/A
+           WorkDir=/home/test-user/project
+           StdOut=/home/test-user/project/logs/%x-%j-%N.out
+        """
+
+        let logPaths = SlurmParsing.parseScontrolLogPaths(output: output)
+
+        XCTAssertNil(logPaths?.stdoutPath)
+        XCTAssertEqual(logPaths?.workDirectory, "/home/test-user/project")
+    }
+
     func testParseHistoricalLogPathsPrefersPrimaryRow() {
         let output = """
         20001|/logs/%x-%j.out|/logs/%x-%j.err|/workdir
@@ -122,6 +179,20 @@ final class SlurmParsingTests: XCTestCase {
 
         XCTAssertEqual(logPaths?.stdoutPath, "/logs/%x-%j.out")
         XCTAssertEqual(logPaths?.stderrPath, "/logs/%x-%j.err")
+        XCTAssertEqual(logPaths?.workDirectory, "/workdir")
+    }
+
+    func testParseHistoricalLogPathsResolvesNodeListFilenamePattern() {
+        let output = """
+        833509|q3-14b-sft-wr|/logs/%x-%j-%N.out|/logs/%x-%j-%N.err|/workdir|gpu[042,043]
+        833509.batch|batch||||gpu042
+        833509.extern|extern||||gpu042
+        """
+
+        let logPaths = SlurmParsing.parseHistoricalLogPaths(output: output, requestedJobID: "833509")
+
+        XCTAssertEqual(logPaths?.stdoutPath, "/logs/q3-14b-sft-wr-833509-gpu042.out")
+        XCTAssertEqual(logPaths?.stderrPath, "/logs/q3-14b-sft-wr-833509-gpu042.err")
         XCTAssertEqual(logPaths?.workDirectory, "/workdir")
     }
 

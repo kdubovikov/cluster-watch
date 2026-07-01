@@ -181,7 +181,7 @@ Log path detection and tailing use Slurm metadata when available:
 
 ```sh
 ssh mycluster "scontrol show job <jobid>"
-ssh mycluster "sacct -n -P --array --expand-patterns -j <jobid> --format=JobIDRaw,StdOut,StdErr,WorkDir"
+ssh mycluster "sacct -n -P --array --expand-patterns -j <jobid> --format=JobID,JobName,StdOut,StdErr,WorkDir,NodeList"
 ```
 
 When a log path is available, the app tails the remote file with SSH using a command equivalent to:
