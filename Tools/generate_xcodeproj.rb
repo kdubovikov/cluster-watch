@@ -24,6 +24,9 @@ APP_SOURCES = [
   'Shared/Services/PersistenceStore.swift',
   'Shared/Services/JobFormatting.swift',
   'Shared/Services/PollingCoordinator.swift',
+  'Shared/Services/AgentHookService.swift',
+  'Shared/Services/HookProcessExecutor.swift',
+  'Shared/Services/HookSocket.swift',
   'Shared/Services/JobStore.swift',
   'Shared/ViewModels/GroupedJobsViewModel.swift'
 ].freeze
@@ -32,7 +35,8 @@ TEST_SOURCES = [
   'Tests/ClusterWatchCoreTests/SlurmParsingTests.swift',
   'Tests/ClusterWatchCoreTests/GroupedJobsViewModelTests.swift',
   'Tests/ClusterWatchCoreTests/PersistenceStoreTests.swift',
-  'Tests/ClusterWatchCoreTests/JobStoreTests.swift'
+  'Tests/ClusterWatchCoreTests/JobStoreTests.swift',
+  'Tests/ClusterWatchCoreTests/AgentHookTests.swift'
 ].freeze
 
 def ensure_group(root_group, relative_path)

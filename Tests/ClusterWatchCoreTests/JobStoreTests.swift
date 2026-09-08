@@ -7,6 +7,59 @@ final class JobStoreTests: XCTestCase {
     private let alphaClusterID = ClusterID(rawValue: "cluster-alpha")
     private let betaClusterID = ClusterID(rawValue: "cluster-beta")
 
+    func testAgentSubscriptionsShareAccountingLookupsAndSurviveUnwatch() async throws {
+        let directory = URL(fileURLWithPath: "/private/tmp/cw-store-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cluster = sampleClusters()[0]
+        let current = CurrentJob(clusterID: cluster.id, jobID: "123", jobName: "job", owner: "test-user",
+                                 state: .running, rawState: "RUNNING")
+        let completed = JobSnapshot(jobID: "123", owner: "test-user", state: .completed, rawState: "COMPLETED",
+                                    jobName: "job", submitTime: nil, startTime: nil, endTime: nil, elapsedSeconds: nil)
+        let client = MockSlurmClient(currentResults: [cluster.id: .success([])],
+                                     historicalResults: ["\(cluster.id.rawValue):123": .success(completed)])
+        let hooks = try AgentHookService(storage: HookFileStore(directory: directory))
+        _ = try hooks.subscribe(cluster: cluster, jobIDs: ["123", "456_7"], states: [.completed],
+                                destination: HookDestination(executable: "/usr/bin/true"))
+        let store = JobStore(persistence: InMemoryPersistenceStore(), slurmClient: client,
+                             notificationManager: MockNotificationManager(), pollingCoordinator: PollingCoordinator(),
+                             initialState: PersistedAppState(clusters: [cluster], globalUsernameFilter: "test-user",
+                                 pollIntervalSeconds: 30, watchedJobs: [WatchedJob(currentJob: current, now: Date())], reachabilityByCluster: [:]))
+        store.agentHooks = hooks
+        await store.refreshCluster(id: cluster.id)
+        let requests = await client.historicalRequests()
+        XCTAssertEqual(requests.filter { $0 == "\(cluster.id.rawValue):123" }.count, 1)
+        XCTAssertTrue(requests.contains("\(cluster.id.rawValue):456_7"), "Unwatched subscribed jobs get historical lookups")
+        XCTAssertEqual(hooks.state.deliveries.count, 1)
+        XCTAssertNil(hooks.state.subscriptions[0].jobs.first { $0.jobID == "456_7" }?.lastState)
+        store.clearCompleted()
+        XCTAssertTrue(store.watchedJobs.isEmpty)
+        XCTAssertFalse(hooks.state.subscriptions[0].cancelled)
+        XCTAssertEqual(hooks.jobIDs(subscriptionIDs: hooks.activeIDs(clusterID: cluster.id)), ["456_7"])
+    }
+
+    func testAgentRegistrationDuringRefreshWaitsForNextPoll() async throws {
+        let directory = URL(fileURLWithPath: "/private/tmp/cw-store-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cluster = sampleClusters()[0]
+        let current = CurrentJob(clusterID: cluster.id, jobID: "123", jobName: "job", owner: "test-user", state: .running, rawState: "RUNNING")
+        let client = MockSlurmClient(currentResults: [cluster.id: .success([current])], historicalResults: [:],
+                                     currentDelaysNanoseconds: [cluster.id: 50_000_000])
+        let hooks = try AgentHookService(storage: HookFileStore(directory: directory))
+        let store = JobStore(persistence: InMemoryPersistenceStore(), slurmClient: client,
+                             notificationManager: MockNotificationManager(), pollingCoordinator: PollingCoordinator(),
+                             initialState: PersistedAppState(clusters: [cluster], globalUsernameFilter: "test-user",
+                                 pollIntervalSeconds: 30, watchedJobs: [], reachabilityByCluster: [:]))
+        store.agentHooks = hooks
+        let poll = Task { await store.refreshCluster(id: cluster.id) }
+        while await client.currentRequestCount() == 0 { await Task.yield() }
+        _ = try hooks.subscribe(cluster: cluster, jobIDs: ["123"], states: [.running],
+                                destination: HookDestination(executable: "/usr/bin/true"))
+        await poll.value
+        XCTAssertTrue(hooks.state.deliveries.isEmpty)
+        await store.refreshCluster(id: cluster.id)
+        XCTAssertEqual(hooks.state.deliveries.count, 1)
+    }
+
     func testUnreachableClusterKeepsWatchedJobAndMarksItStale() async {
         let watchedJob = WatchedJob(
             clusterID: alphaClusterID,
@@ -785,6 +838,11 @@ private actor MockSlurmClient: SlurmClientProtocol {
     private let currentDelaysNanoseconds: [ClusterID: UInt64]
     private let historicalDelaysNanoseconds: [String: UInt64]
     private var recordedCancelRequests: [String] = []
+    private var recordedHistoricalRequests: [String] = []
+    private var currentRequests = 0
+
+    func historicalRequests() -> [String] { recordedHistoricalRequests }
+    func currentRequestCount() -> Int { currentRequests }
 
     init(
         currentResults: [ClusterID: Result<[CurrentJob], Error>],
@@ -809,6 +867,7 @@ private actor MockSlurmClient: SlurmClientProtocol {
     }
 
     func fetchCurrentJobs(for cluster: ClusterConfig, username: String) async throws -> [CurrentJob] {
+        currentRequests += 1
         if let delay = currentDelaysNanoseconds[cluster.id] {
             try? await Task.sleep(nanoseconds: delay)
         }
@@ -820,6 +879,7 @@ private actor MockSlurmClient: SlurmClientProtocol {
 
     func fetchHistoricalJob(for cluster: ClusterConfig, jobID: String) async throws -> JobSnapshot? {
         let key = "\(cluster.id.rawValue):\(jobID)"
+        recordedHistoricalRequests.append(key)
         if let delay = historicalDelaysNanoseconds[key] {
             try? await Task.sleep(nanoseconds: delay)
         }

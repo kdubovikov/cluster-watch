@@ -33,6 +33,11 @@ public final class JobStore {
     @ObservationIgnored private var fetchingLaunchDetailsJobKeys: Set<String> = []
     @ObservationIgnored private var watchedRelationsCache: WatchedRelationsCache?
     @ObservationIgnored private var groupedWatchedSectionsCache: GroupedWatchedSectionsCache?
+    @ObservationIgnored public var agentHooks: AgentHookService?
+    public private(set) var agentHookError: String?
+    @ObservationIgnored private var enableAgentHooks = false
+    @ObservationIgnored private var hookServer: HookSocketServer?
+    @ObservationIgnored private var hookDeliveryTask: Task<Void, Never>?
 
     public init(
         persistence: any PersistenceStoring,
@@ -77,6 +82,7 @@ public final class JobStore {
             pollingCoordinator: PollingCoordinator(),
             initialState: initialState
         )
+        enableAgentHooks = true
     }
 
     public var activeLogTail: JobLogTailSession? {
@@ -226,7 +232,47 @@ public final class JobStore {
         guard !bootstrapped else { return }
         bootstrapped = true
         await loadPersistedState()
+        if enableAgentHooks { startAgentHookServer() }
         start()
+    }
+
+    private func startAgentHookServer() {
+        do {
+            // Acquire the single-app socket lock before loading/recovering the outbox.
+            hookServer = try HookSocketServer { [weak self] request in
+                guard let self else { return HookResponse(ok: false, error: "Cluster Watch is closing.") }
+                return await self.handleHookRequest(request)
+            }
+            agentHooks = try AgentHookService(storage: HookFileStore())
+            hookDeliveryTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    guard let self else { return }
+                    do {
+                        try self.agentHooks?.updateClusters(self.clusters, demo: self.isDemoDataEnabled)
+                        await self.agentHooks?.deliverDue()
+                        self.agentHookError = self.agentHooks?.lastError
+                    } catch { self.agentHookError = error.localizedDescription }
+                    try? await Task.sleep(for: .seconds(1))
+                }
+            }
+        } catch { agentHookError = error.localizedDescription }
+    }
+
+    private func handleHookRequest(_ request: HookRequest) -> HookResponse {
+        guard let agentHooks else {
+            return HookResponse(ok: false, error: agentHookError ?? "Hook service is unavailable.")
+        }
+        do {
+            try agentHooks.updateClusters(clusters, demo: isDemoDataEnabled)
+            var response = try agentHooks.handle(request, clusters: clusters)
+            response.serviceError = agentHookError ?? agentHooks.lastError
+            if request.command == "subscribe" {
+                // Registration is durable before acknowledgement. If a poll is
+                // already in progress, the next poll establishes a fresh baseline.
+                Task { await refreshAll() }
+            }
+            return response
+        } catch { return HookResponse(ok: false, error: error.localizedDescription) }
     }
 
     #if DEBUG
@@ -258,6 +304,8 @@ public final class JobStore {
         self.globalUsernameFilter = globalUsernameFilter.trimmedOrEmpty.isEmpty ? NSUserName() : globalUsernameFilter.trimmedOrEmpty
         self.pollIntervalSeconds = max(5, pollIntervalSeconds)
         self.isDemoDataEnabled = isDemoDataEnabled
+        do { try agentHooks?.updateClusters(self.clusters, demo: isDemoDataEnabled) }
+        catch { agentHookError = error.localizedDescription }
         #if DEBUG
         demoState = isDemoDataEnabled ? Self.makeDemoDataState(now: nowProvider()) : nil
         if isDemoDataEnabled {
@@ -686,6 +734,10 @@ public final class JobStore {
         guard !refreshingClusterIDs.contains(id) else { return }
         guard let cluster = clusters.first(where: { $0.id == id }), cluster.isEnabled else { return }
 
+        do { try agentHooks?.updateClusters(clusters, demo: isDemoDataEnabled) }
+        catch { agentHookError = error.localizedDescription }
+        let hookSubscriptionIDs = agentHooks?.activeIDs(clusterID: id) ?? []
+
         refreshingClusterIDs.insert(id)
         defer {
             refreshingClusterIDs.remove(id)
@@ -710,7 +762,8 @@ public final class JobStore {
             reachabilityByCluster[id] = state
 
             await refreshClusterLoad(for: cluster, username: username, currentJobs: currentJobs, refreshedAt: refreshedAt)
-            await reconcileWatchedJobs(for: cluster, currentJobs: currentJobs, refreshedAt: refreshedAt)
+            await reconcileWatchedJobs(for: cluster, currentJobs: currentJobs, refreshedAt: refreshedAt,
+                                       hookSubscriptionIDs: hookSubscriptionIDs)
         } catch let error as SlurmClientError {
             switch error {
             case .queryFailed(let message):
@@ -913,8 +966,26 @@ public final class JobStore {
         )
     }
 
-    private func reconcileWatchedJobs(for cluster: ClusterConfig, currentJobs: [CurrentJob], refreshedAt: Date) async {
+    private func reconcileWatchedJobs(for cluster: ClusterConfig, currentJobs: [CurrentJob], refreshedAt: Date,
+                                      hookSubscriptionIDs: Set<String> = []) async {
         let currentByID = Dictionary(uniqueKeysWithValues: currentJobs.map { ($0.jobID, $0) })
+        var snapshots = currentByID.mapValues(\.snapshot)
+        var missing: Set<String> = []
+        let watchedIDs = Set(watchedJobs.filter { $0.clusterID == cluster.id }.map(\.jobID))
+        let subscribedIDs = agentHooks?.jobIDs(subscriptionIDs: hookSubscriptionIDs) ?? []
+        for jobID in watchedIDs.union(subscribedIDs).sorted() where snapshots[jobID] == nil {
+            do {
+                if let snapshot = try await slurmClient.fetchHistoricalJob(for: cluster, jobID: jobID) {
+                    snapshots[jobID] = snapshot
+                } else { missing.insert(jobID) }
+            } catch { /* A failed lookup preserves the last confirmed state. */ }
+        }
+        // Recheck settings after scheduler awaits, including demo-mode changes.
+        do {
+            try agentHooks?.updateClusters(clusters, demo: isDemoDataEnabled)
+            try agentHooks?.observe(cluster: cluster, snapshots: snapshots,
+                                    subscriptionIDs: hookSubscriptionIDs, now: nowProvider())
+        } catch { agentHookError = error.localizedDescription }
         var updatedJobs = watchedJobs.filter { $0.clusterID == cluster.id }
         var notifications: [WatchedJob] = []
 
@@ -933,21 +1004,17 @@ public final class JobStore {
                 continue
             }
 
-            do {
-                if let historical = try await slurmClient.fetchHistoricalJob(for: cluster, jobID: updatedJobs[index].jobID) {
-                    if updatedJobs[index].isTerminal, !historical.state.isTerminal {
-                        updatedJobs[index].markRefreshed(at: refreshedAt)
-                        continue
-                    }
-
-                    let wasTerminal = updatedJobs[index].isTerminal
-                    updatedJobs[index].apply(snapshot: historical, refreshedAt: refreshedAt)
-                    markNotificationIfNeeded(job: &updatedJobs[index], wasTerminal: wasTerminal, notifications: &notifications)
-                } else {
-                    updatedJobs[index].markMissingFromScheduler(at: refreshedAt)
+            if let historical = snapshots[updatedJobs[index].jobID] {
+                if updatedJobs[index].isTerminal, !historical.state.isTerminal {
+                    updatedJobs[index].markRefreshed(at: refreshedAt)
+                    continue
                 }
-            } catch {
-                continue
+
+                let wasTerminal = updatedJobs[index].isTerminal
+                updatedJobs[index].apply(snapshot: historical, refreshedAt: refreshedAt)
+                markNotificationIfNeeded(job: &updatedJobs[index], wasTerminal: wasTerminal, notifications: &notifications)
+            } else if missing.contains(updatedJobs[index].jobID) {
+                updatedJobs[index].markMissingFromScheduler(at: refreshedAt)
             }
         }
 

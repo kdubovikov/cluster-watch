@@ -45,6 +45,7 @@ Cluster Watch is a native macOS menu bar app for monitoring Slurm jobs across an
   - logs are tailed over SSH from the remote cluster
   - `Tail` is only shown for non-pending jobs with detected log files
 - One-shot local notifications for terminal transitions
+- Agent subscriptions for selected job states, delivered to Codex threads or local executables
 - Persistent local state for watched jobs, cluster settings, and reachability snapshots
 
 ## Project Layout
@@ -152,6 +153,108 @@ If you prefer to build from source instead:
    - `Unwatch` on a single standalone row
    - group unwatch on a dependency-linked watched chain
    - `Clear Completed` for all watched jobs in terminal states
+
+## Agent Status Subscriptions
+
+The `cluster-watch` CLI registers subscriptions with the running app. Each subscription selects a configured cluster, explicit job IDs, destination statuses, and a notification destination. It uses the app's existing scheduler polling; no additional agent loop is needed.
+
+### Install the CLI
+
+Starting with v0.6.0, release archives and manual app builds include the CLI at `Cluster Watch.app/Contents/Helpers/cluster-watch`. Installing the app does **not** automatically add the CLI to your shell's `PATH`.
+
+After moving the app to `/Applications`, create a symlink in your user bin directory:
+
+```sh
+mkdir -p "$HOME/.local/bin"
+ln -s "/Applications/Cluster Watch.app/Contents/Helpers/cluster-watch" "$HOME/.local/bin/cluster-watch"
+```
+
+The symlink uses the bundled CLI when you replace the app with a newer release. Adjust the app path if you installed it elsewhere. If the link already exists, inspect it before replacing it.
+
+Add the bin directory to your shell's `PATH` if it is not already present:
+
+- **fish:** run the following once; `fish_add_path` persists the addition for future sessions.
+
+  ```fish
+  fish_add_path "$HOME/.local/bin"
+  ```
+
+- **zsh or bash:** add this line to `~/.zshrc` or `~/.bashrc`, respectively, then open a new terminal. For bash login shells on macOS, add it to `~/.bash_profile` instead if that file does not source `~/.bashrc`.
+
+  ```sh
+  export PATH="$HOME/.local/bin:$PATH"
+  ```
+
+Verify that your shell can find the utility:
+
+```sh
+command -v cluster-watch
+cluster-watch --help
+```
+
+You can also invoke the bundled CLI directly without changing `PATH`:
+
+```sh
+"/Applications/Cluster Watch.app/Contents/Helpers/cluster-watch" --help
+```
+
+For source builds, run these commands from the repository root to build and link the CLI instead of using the app-bundle symlink:
+
+```sh
+swift build -c release --product cluster-watch
+mkdir -p "$HOME/.local/bin"
+ln -s "$PWD/.build/release/cluster-watch" "$HOME/.local/bin/cluster-watch"
+```
+
+Use the same shell `PATH` setup above. Building the CLI alone does not update the app; build and run the matching app version as well.
+
+### Subscribe to jobs
+
+Open the updated app before registering subscriptions. Commands return JSON, with `ok: false` and exit code 1 on errors. List configured clusters to obtain stable IDs or SSH aliases:
+
+```sh
+cluster-watch clusters
+cluster-watch subscribe \
+  --cluster camd1 --job 12345 --job 12346_7 \
+  --states running,terminal \
+  --codex-thread <thread-uuid>
+```
+
+`--codex-thread` requires an existing thread UUID. The CLI resolves `codex` on its own `PATH` and stores the absolute executable path; override it with `--codex-executable /absolute/path/to/codex`. The app invokes `codex queue --thread … --message …` without a shell. A successful exit is recorded as `queued`, which means the CLI accepted the message; it does not confirm that the agent processed it.
+
+For other agents, supply an executable and optional literal arguments:
+
+```sh
+cluster-watch subscribe \
+  --cluster camd1 --job 12345 --states completed,failed,timeout \
+  --exec /absolute/path/to/agent-hook -- --channel research
+```
+
+The executable receives one JSON event through stdin. Its working directory is the hook storage directory. Use absolute script/interpreter paths when needed; the app's environment may differ from your terminal. Job metadata and arguments are never expanded by a shell. Event data contains `schemaVersion`, `id`, `subscriptionID`, `clusterID`, `clusterName`, `jobID`, `jobName`, `previousState` (absent for the initial observation), `state`, `rawState`, `observedAt`, and available `submitTime`, `startTime`, and `endTime` values. Times are UTC ISO 8601 strings. Codex messages include this event and its local JSON artifact path, without instructions granting additional authorization.
+
+Manage subscriptions and inspect delivery results:
+
+```sh
+cluster-watch subscriptions list
+cluster-watch subscriptions show <subscription-id>
+cluster-watch events list --subscription <subscription-id>
+cluster-watch events retry <event-id>
+cluster-watch unsubscribe <subscription-id>
+```
+
+Behavior:
+
+- Status names are `pending`, `running`, `completed`, `failed`, `cancelled`, `timeout`, `outOfMemory`, `nodeFail`, `preempted`, and `unknown`. `terminal` expands to all seven terminal statuses. These are the app's normalized states; for example, Slurm `COMPLETING` maps to `running`.
+- The first fresh observation sends an event if it matches. Subsequent events require a change into a selected status. Repeated polls do not resend an unchanged status.
+- Each job retires after its first terminal observation, including an unselected terminal status. A subscription's `completed` field becomes true after all its jobs retire; pending deliveries continue. Monitoring possible requeues after terminal states requires a new subscription.
+- Ordinary IDs and explicit array-task IDs such as `12346_7` are supported, up to 1,000 per subscription. Array ranges, step IDs, and job-name patterns are not supported.
+- Subscriptions are independent of UI watches. Unwatching or clearing completed jobs does not cancel them. Unknown jobs wait for scheduler/accounting records; missing rows and outages preserve the last confirmed status.
+- Disabled clusters pause monitoring. Removed clusters appear as subscription errors. Demo mode pauses monitoring and delivery of real hooks.
+- Destinations run serially outside the UI thread, with a 30-second timeout and up to 16 KiB captured from each output stream per attempt. A failed delivery gets three retries after 5, 30, and 120 seconds, measured from the preceding attempt's end. Exhausted deliveries are marked `failed` and can be retried manually.
+- Event IDs remain stable across retries. A timeout or crash after a destination accepted an event can cause a duplicate; consumers should deduplicate by `id`. Unsubscribing cancels monitoring and pending deliveries; an already-running destination may finish.
+- Monitoring requires the app to be running and the Mac awake. Subscriptions and pending deliveries survive restarts, but polling cannot reconstruct intermediate states it never observed.
+
+Hook state, event artifacts, and delivery results persist separately from UI state under `~/Library/Application Support/ClusterWatch/hooks/`. Results remain available for inspection; unsubscribing preserves their history. The local Unix socket accepts only connections from the same macOS user. A single app instance owns this socket; if multiple copies are open, quit the extras before switching versions.
 
 ## Slurm Command Assumptions
 

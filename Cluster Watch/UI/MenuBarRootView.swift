@@ -5,6 +5,10 @@ struct MenuBarRootView: View {
     @Bindable var store: JobStore
     @Environment(\.openWindow) private var openWindow
 
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
+    }
+
     var body: some View {
         ZStack {
             LinearGradient(
@@ -57,7 +61,7 @@ struct MenuBarRootView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Cluster Watch")
                         .font(.system(.title3, design: .rounded, weight: .semibold))
-                    Text("Watched jobs stay pinned until you remove them.")
+                    Text("Version \(appVersion)")
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(.secondary)
                 }

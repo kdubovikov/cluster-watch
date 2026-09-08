@@ -28,8 +28,7 @@ set_plist_string "CFBundleExecutable" "Cluster Watch"
 set_plist_string "CFBundleIdentifier" "com.kirilldubovikov.ClusterWatch.manual"
 set_plist_string "CFBundleName" "Cluster Watch"
 set_plist_string "CFBundlePackageType" "APPL"
-set_plist_string "CFBundleShortVersionString" "0.5.3"
-set_plist_string "CFBundleVersion" "7"
+# Version and build number come from the copied source Info.plist.
 
 swiftc \
   -sdk "$SDKROOT" \
@@ -55,6 +54,9 @@ swiftc \
   "$ROOT_DIR/Shared/Services/PersistenceStore.swift" \
   "$ROOT_DIR/Shared/Services/JobFormatting.swift" \
   "$ROOT_DIR/Shared/Services/PollingCoordinator.swift" \
+  "$ROOT_DIR/Shared/Services/AgentHookService.swift" \
+  "$ROOT_DIR/Shared/Services/HookProcessExecutor.swift" \
+  "$ROOT_DIR/Shared/Services/HookSocket.swift" \
   "$ROOT_DIR/Shared/Services/JobStore.swift" \
   "$ROOT_DIR/Shared/ViewModels/GroupedJobsViewModel.swift"
 
@@ -64,6 +66,10 @@ swiftc \
   --destination "$FRAMEWORKS_DIR" \
   --scan-executable "$EXECUTABLE_PATH" \
   --scan-folder "$FRAMEWORKS_DIR"
+
+mkdir -p "$CONTENTS_DIR/Helpers"
+swift build --package-path "$ROOT_DIR" -c release --product cluster-watch
+cp "$ROOT_DIR/.build/release/cluster-watch" "$CONTENTS_DIR/Helpers/cluster-watch"
 
 codesign --force --deep --sign - "$APP_DIR"
 open -n "$APP_DIR"

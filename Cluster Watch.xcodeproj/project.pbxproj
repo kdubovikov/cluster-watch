@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AA0100000000000000000001 /* AgentHookService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0200000000000000000001 /* AgentHookService.swift */; };
+		AA0100000000000000000002 /* HookProcessExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0200000000000000000002 /* HookProcessExecutor.swift */; };
+		AA0100000000000000000003 /* HookSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0200000000000000000003 /* HookSocket.swift */; };
+		AA0100000000000000000004 /* AgentHookTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0200000000000000000004 /* AgentHookTests.swift */; };
 		02014447C2EDBFE03D9B0834 /* SlurmParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE636D56F05870BE35089B2B /* SlurmParsingTests.swift */; };
 		04479C8D42618C2F8D2C79DA /* BrowseJobsSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F64F89C05E196D6FFC5D0B84 /* BrowseJobsSectionView.swift */; };
 		1478088CAE141B2BA893A35E /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 26910D9DBE20437D170A4385 /* Cocoa.framework */; };
@@ -45,6 +49,10 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		AA0200000000000000000001 /* AgentHookService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AgentHookService.swift; sourceTree = "<group>"; };
+		AA0200000000000000000002 /* HookProcessExecutor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HookProcessExecutor.swift; sourceTree = "<group>"; };
+		AA0200000000000000000003 /* HookSocket.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HookSocket.swift; sourceTree = "<group>"; };
+		AA0200000000000000000004 /* AgentHookTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AgentHookTests.swift; sourceTree = "<group>"; };
 		0292CB392524AED265112296 /* SlurmClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SlurmClient.swift; sourceTree = "<group>"; };
 		067C0A4ADDB375B84045E969 /* JobStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = JobStore.swift; sourceTree = "<group>"; };
 		0C1FC8FC717DC80D7A1AE72E /* ClusterStatusSectionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ClusterStatusSectionView.swift; sourceTree = "<group>"; };
@@ -135,6 +143,7 @@
 				C62F560AB2BBC505A4358B81 /* GroupedJobsViewModelTests.swift */,
 				A9BA4F98EB1D89D17CDB6765 /* PersistenceStoreTests.swift */,
 				CB5B3086795152812975D0A3 /* JobStoreTests.swift */,
+				AA0200000000000000000004 /* AgentHookTests.swift */,
 			);
 			name = ClusterWatchCoreTests;
 			path = ClusterWatchCoreTests;
@@ -177,6 +186,9 @@
 				2FCD9FFAC84A0A491BEACD96 /* JobFormatting.swift */,
 				E8CE2D3612A48C2FE4DCF78E /* PollingCoordinator.swift */,
 				067C0A4ADDB375B84045E969 /* JobStore.swift */,
+				AA0200000000000000000001 /* AgentHookService.swift */,
+				AA0200000000000000000002 /* HookProcessExecutor.swift */,
+				AA0200000000000000000003 /* HookSocket.swift */,
 			);
 			name = Services;
 			path = Services;
@@ -332,6 +344,9 @@
 				82BA7717D66CF5F1F178C792 /* JobFormatting.swift in Sources */,
 				B77795C80340FB436C5C4D83 /* PollingCoordinator.swift in Sources */,
 				9FCC2B3E7E3B6B30DDE91C9D /* JobStore.swift in Sources */,
+				AA0100000000000000000001 /* AgentHookService.swift in Sources */,
+				AA0100000000000000000002 /* HookProcessExecutor.swift in Sources */,
+				AA0100000000000000000003 /* HookSocket.swift in Sources */,
 				879918C2585E7BB5F3B5322A /* GroupedJobsViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -344,6 +359,7 @@
 				B7556AF7964C8F094C838FA9 /* GroupedJobsViewModelTests.swift in Sources */,
 				F15F1E245CB187DA4D498D4B /* PersistenceStoreTests.swift in Sources */,
 				51349F56FA3B99BE521D977D /* JobStoreTests.swift in Sources */,
+				AA0100000000000000000004 /* AgentHookTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

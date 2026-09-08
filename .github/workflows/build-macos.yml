@@ -35,6 +35,10 @@ jobs:
 
       - name: Package app artifact
         run: |
+          swift build -c release --product cluster-watch --arch arm64 --arch x86_64
+          mkdir -p "build/Build/Products/Release/Cluster Watch.app/Contents/Helpers"
+          cp .build/apple/Products/Release/cluster-watch \
+            "build/Build/Products/Release/Cluster Watch.app/Contents/Helpers/cluster-watch"
           mkdir -p dist
           ditto -c -k --sequesterRsrc --keepParent \
             "build/Build/Products/Release/Cluster Watch.app" \
