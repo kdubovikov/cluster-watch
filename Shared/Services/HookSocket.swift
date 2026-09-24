@@ -26,6 +26,8 @@ public struct HookResponse: Codable, Sendable {
     public var subscriptions: [HookSubscription]?
     public var events: [HookDelivery]?
     public var serviceError: String?
+    /// Set by the CLI for inbox subscriptions: the command that streams their events.
+    public var follow: String?
     public init(ok: Bool = true, error: String? = nil, clusters: [ClusterConfig]? = nil,
                 subscriptions: [HookSubscription]? = nil, events: [HookDelivery]? = nil, serviceError: String? = nil) {
         self.ok = ok

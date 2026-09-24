@@ -24,12 +24,28 @@ public protocol HookExecuting: Sendable {
     func execute(destination: HookDestination, event: HookEvent, eventFile: URL) async -> HookExecutionResult
 }
 
+/// Body for `opencode api post /api/session/<id>/prompt`. `queue` waits for an
+/// in-flight turn instead of steering it; the default `resume` schedules the
+/// session so a notification wakes an idle agent.
+private struct OpenCodePrompt: Encodable {
+    var text: String
+    var delivery = "queue"
+}
+
 public struct HookProcessExecutor: HookExecuting {
     public var timeout: TimeInterval
     public init(timeout: TimeInterval = 30) { self.timeout = timeout }
 
     public func execute(destination: HookDestination, event: HookEvent, eventFile: URL) async -> HookExecutionResult {
-        await Task.detached {
+        if destination.inbox == true {
+            do {
+                try HookInbox.append(event, directory: eventFile.deletingLastPathComponent())
+                return HookExecutionResult(exitCode: 0)
+            } catch {
+                return HookExecutionResult(error: error.localizedDescription)
+            }
+        }
+        return await Task.detached {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: destination.executable)
             process.arguments = destination.arguments
@@ -40,10 +56,17 @@ public struct HookProcessExecutor: HookExecuting {
             var input: FileHandle?
             defer { try? input?.close() }
             do {
-                if let thread = destination.codexThread {
+                if destination.isAgentQueue {
                     let summary = String(decoding: try HookJSON.encode(event), as: UTF8.self)
-                    process.arguments = ["queue", "--thread", thread, "--message",
-                        "[Cluster Watch job status]\nEvent data: \(summary)\nEvent file: \(eventFile.path)"]
+                    let message = "[Cluster Watch job status]\nEvent data: \(summary)\nEvent file: \(eventFile.path)"
+                    if let thread = destination.codexThread {
+                        process.arguments = ["queue", "--thread", thread, "--message", message]
+                    } else if let session = destination.claudeSession {
+                        process.arguments = ["-p", message, "--cloud", session]
+                    } else if let session = destination.opencodeSession {
+                        let body = String(decoding: try HookJSON.encode(OpenCodePrompt(text: message)), as: UTF8.self)
+                        process.arguments = ["api", "post", "/api/session/\(session)/prompt", "--data", body]
+                    }
                     process.standardInput = FileHandle.nullDevice
                 } else {
                     input = try FileHandle(forReadingFrom: eventFile)

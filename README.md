@@ -45,7 +45,7 @@ Cluster Watch is a native macOS menu bar app for monitoring Slurm jobs across an
   - logs are tailed over SSH from the remote cluster
   - `Tail` is only shown for non-pending jobs with detected log files
 - One-shot local notifications for terminal transitions
-- Agent subscriptions for selected job states, delivered to Codex threads or local executables
+- Agent subscriptions for selected job states, delivered to an inbox that agents can follow, Codex threads, OpenCode sessions, Claude Code cloud sessions, or local executables
 - Persistent local state for watched jobs, cluster settings, and reachability snapshots
 
 ## Project Layout
@@ -220,7 +220,36 @@ cluster-watch subscribe \
   --codex-thread <thread-uuid>
 ```
 
+Without a destination option, events are appended to an inbox file, one compact JSON event per line, at `hooks/inbox/<subscription-id>.jsonl`. The subscribe response then includes a `follow` command:
+
+```sh
+cluster-watch subscribe --cluster cscc --job 12345 --states terminal
+cluster-watch events follow --subscription <subscription-id>
+```
+
+`events follow` prints every inbox event from the beginning, then new ones as they arrive. It exits with status 0 once the subscription is cancelled, or all its jobs have retired and their events were written. This suits agents that can run a command in the background and be woken by its output, such as Claude Code: the agent subscribes, runs the `follow` command from the response in the background, and is woken only for selected state changes. It does not poll the cluster itself. If the app is not running, `follow` keeps waiting until it answers. Consumers should deduplicate by `id`.
+
 `--codex-thread` requires an existing thread UUID. The CLI resolves `codex` on its own `PATH` and stores the absolute executable path; override it with `--codex-executable /absolute/path/to/codex`. The app invokes `codex queue --thread … --message …` without a shell. A successful exit is recorded as `queued`, which means the CLI accepted the message; it does not confirm that the agent processed it.
+
+To notify a Claude Code cloud session, pass its session ID or `claude.ai/code` URL:
+
+```sh
+cluster-watch subscribe \
+  --cluster camd1 --job 12345 --states terminal \
+  --claude-session <session-id-or-url>
+```
+
+The CLI resolves `claude` on its own `PATH` and stores the absolute executable path; override it with `--claude-executable /absolute/path/to/claude`. The app invokes `claude -p <message> --cloud <session>` without a shell, using the same message format as Codex. A successful exit is recorded as `queued`. The `claude` CLI must be signed in for the macOS user running the app.
+
+To notify an OpenCode session, pass its session ID (`ses_...`). List IDs from the project directory with `opencode session list --format json`:
+
+```sh
+cluster-watch subscribe \
+  --cluster camd1 --job 12345 --states terminal \
+  --opencode-session ses_01ABC
+```
+
+The CLI resolves `opencode` on its own `PATH` and stores the absolute executable path; override it with `--opencode-executable /absolute/path/to/opencode`. The app invokes `opencode api post /api/session/<session>/prompt` without a shell, admitting one queued input. The OpenCode background service owns the endpoint, so delivery does not wait for the model, and a queued input waits for an in-flight turn instead of steering it. A successful exit is recorded as `queued`, using the same message format as Codex. The session must already exist, and the OpenCode background service must be reachable by the macOS user running the app.
 
 For other agents, supply an executable and optional literal arguments:
 
@@ -230,7 +259,7 @@ cluster-watch subscribe \
   --exec /absolute/path/to/agent-hook -- --channel research
 ```
 
-The executable receives one JSON event through stdin. Its working directory is the hook storage directory. Use absolute script/interpreter paths when needed; the app's environment may differ from your terminal. Job metadata and arguments are never expanded by a shell. Event data contains `schemaVersion`, `id`, `subscriptionID`, `clusterID`, `clusterName`, `jobID`, `jobName`, `previousState` (absent for the initial observation), `state`, `rawState`, `observedAt`, and available `submitTime`, `startTime`, and `endTime` values. Times are UTC ISO 8601 strings. Codex messages include this event and its local JSON artifact path, without instructions granting additional authorization.
+The executable receives one JSON event through stdin. Its working directory is the hook storage directory. Use absolute script/interpreter paths when needed; the app's environment may differ from your terminal. Job metadata and arguments are never expanded by a shell. Event data contains `schemaVersion`, `id`, `subscriptionID`, `clusterID`, `clusterName`, `jobID`, `jobName`, `previousState` (absent for the initial observation), `state`, `rawState`, `observedAt`, and available `submitTime`, `startTime`, and `endTime` values. Times are UTC ISO 8601 strings. Codex, Claude, and OpenCode messages include this event and its local JSON artifact path, without instructions granting additional authorization.
 
 Manage subscriptions and inspect delivery results:
 

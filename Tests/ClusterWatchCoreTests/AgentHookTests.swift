@@ -191,6 +191,24 @@ final class AgentHookTests: XCTestCase {
             XCTAssertThrowsError(try service.subscribe(cluster: cluster, jobIDs: [id], states: [.running], destination: destination))
         }
         XCTAssertThrowsError(try service.subscribe(cluster: cluster, jobIDs: ["123"], states: [], destination: destination))
+        for session in ["", "-p", "a b", "a\nb"] {
+            XCTAssertThrowsError(try service.subscribe(cluster: cluster, jobIDs: ["123"], states: [.running],
+                destination: HookDestination(executable: "/usr/bin/true", claudeSession: session)))
+        }
+        XCTAssertThrowsError(try service.subscribe(cluster: cluster, jobIDs: ["123"], states: [.running],
+            destination: HookDestination(executable: "/usr/bin/true", arguments: ["x"], claudeSession: "session_01ABC")))
+        XCTAssertNoThrow(try service.subscribe(cluster: cluster, jobIDs: ["123"], states: [.running],
+            destination: HookDestination(executable: "/usr/bin/true", claudeSession: "https://claude.ai/code/session_01ABC")))
+        for session in ["", "-p", "a b", "ses a b", "ses\nb"] {
+            XCTAssertThrowsError(try service.subscribe(cluster: cluster, jobIDs: ["123"], states: [.running],
+                destination: HookDestination(executable: "/usr/bin/true", opencodeSession: session)))
+        }
+        XCTAssertThrowsError(try service.subscribe(cluster: cluster, jobIDs: ["123"], states: [.running],
+            destination: HookDestination(executable: "/usr/bin/true", arguments: ["x"], opencodeSession: "ses_01ABC")))
+        XCTAssertThrowsError(try service.subscribe(cluster: cluster, jobIDs: ["123"], states: [.running],
+            destination: HookDestination(executable: "/usr/bin/true", claudeSession: "session_01ABC", opencodeSession: "ses_01ABC")))
+        XCTAssertNoThrow(try service.subscribe(cluster: cluster, jobIDs: ["123"], states: [.running],
+            destination: HookDestination(executable: "/usr/bin/true", opencodeSession: "ses_01ABC")))
         XCTAssertThrowsError(try service.handle(HookRequest(command: "subscribe", cluster: "alpha-ssh", jobIDs: ["123"],
             states: ["typo"], destination: destination), clusters: [cluster]))
         let response = try service.handle(HookRequest(command: "subscribe", cluster: "alpha-ssh", jobIDs: ["123"],
@@ -232,6 +250,20 @@ final class AgentHookTests: XCTestCase {
         XCTAssertTrue(echo.stdout.hasPrefix("queue --thread \(thread) --message [Cluster Watch job status]"))
         XCTAssertTrue(echo.stdout.contains("$(touch unwanted) `command`"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("unwanted").path))
+        let claude = await HookProcessExecutor().execute(
+            destination: HookDestination(executable: "/bin/echo", claudeSession: "session_01ABC"), event: event, eventFile: file)
+        XCTAssertTrue(claude.succeeded)
+        XCTAssertTrue(claude.stdout.hasPrefix("-p [Cluster Watch job status]"))
+        XCTAssertTrue(claude.stdout.hasSuffix("--cloud session_01ABC\n"))
+        let opencode = await HookProcessExecutor().execute(
+            destination: HookDestination(executable: "/bin/echo", opencodeSession: "ses_01ABC"), event: event, eventFile: file)
+        XCTAssertTrue(opencode.succeeded)
+        let promptPrefix = "api post /api/session/ses_01ABC/prompt --data "
+        XCTAssertTrue(opencode.stdout.hasPrefix(promptPrefix))
+        let body = try HookJSON.decode([String: String].self, from: Data(opencode.stdout.dropFirst(promptPrefix.count).utf8))
+        XCTAssertEqual(body["delivery"], "queue")
+        XCTAssertEqual(body["text"]?.contains("Event file: \(file.path)"), true)
+        XCTAssertEqual(body["text"]?.contains("job $(touch unwanted) `command`"), true)
         let timeout = await HookProcessExecutor(timeout: 0.05).execute(
             destination: HookDestination(executable: "/bin/sleep", arguments: ["10"]), event: event, eventFile: file)
         XCTAssertTrue(timeout.timedOut)
@@ -240,6 +272,26 @@ final class AgentHookTests: XCTestCase {
             destination: HookDestination(executable: "/usr/bin/yes"), event: event, eventFile: file)
         XCTAssertEqual(noisy.stdout.utf8.count, 16_384)
         XCTAssertTrue(noisy.timedOut)
+    }
+
+    func testInboxAppendsOneJSONLinePerEventAndIsDelivered() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try HookFileStore(directory: directory)
+        let service = try AgentHookService(storage: store)
+        let sub = try service.subscribe(cluster: cluster, jobIDs: ["123", "456"], states: [.running, .completed],
+                                        destination: .inboxOnly)
+        try service.observe(cluster: cluster, snapshots: ["123": snapshot(.running), "456": snapshot(.completed, id: "456")],
+                            subscriptionIDs: [sub.id], now: time)
+        await service.deliverDue(now: time)
+        XCTAssertEqual(service.state.deliveries.map(\.status), ["delivered", "delivered"])
+        let text = try String(contentsOf: HookInbox.url(subscriptionID: sub.id, directory: directory), encoding: .utf8)
+        let lines = text.split(separator: "\n")
+        XCTAssertTrue(text.hasSuffix("\n"))
+        XCTAssertEqual(try lines.map { try HookJSON.decode(HookEvent.self, from: Data($0.utf8)) },
+                       service.state.deliveries.map(\.event))
+        XCTAssertThrowsError(try service.subscribe(cluster: cluster, jobIDs: ["123"], states: [.running],
+            destination: HookDestination(executable: "/usr/bin/true", inbox: true)))
     }
 
     func testSocketRoundTripAndSingleServerLock() async throws {

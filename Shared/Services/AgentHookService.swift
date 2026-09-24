@@ -29,14 +29,38 @@ public struct HookDestination: Codable, Equatable, Sendable {
     public var executable: String
     public var arguments: [String]
     public var codexThread: String?
+    /// Claude Code cloud session ID or claude.ai/code URL, passed to `claude --cloud`.
+    public var claudeSession: String?
+    /// OpenCode session ID (`ses_...`); the app admits one queued input through
+    /// `opencode api post /api/session/<id>/prompt`.
+    public var opencodeSession: String?
+    /// Record-only: events are appended to the subscription's inbox file for
+    /// `cluster-watch events follow`, without running a process.
+    public var inbox: Bool?
 
-    public init(executable: String, arguments: [String] = [], codexThread: String? = nil) {
+    public init(executable: String, arguments: [String] = [], codexThread: String? = nil,
+                claudeSession: String? = nil, opencodeSession: String? = nil, inbox: Bool? = nil) {
         self.executable = executable
         self.arguments = arguments
         self.codexThread = codexThread
+        self.claudeSession = claudeSession
+        self.opencodeSession = opencodeSession
+        self.inbox = inbox
     }
 
+    public static let inboxOnly = HookDestination(executable: "", inbox: true)
+
+    /// Agent destinations only confirm that the CLI accepted the message.
+    var isAgentQueue: Bool { codexThread != nil || claudeSession != nil || opencodeSession != nil }
+
     func validate() throws {
+        if inbox == true {
+            guard executable.isEmpty, arguments.isEmpty, codexThread == nil, claudeSession == nil,
+                  opencodeSession == nil else {
+                throw HookError("Inbox destination cannot be combined with another destination.")
+            }
+            return
+        }
         guard executable.hasPrefix("/"), !executable.contains("\0"),
               FileManager.default.isExecutableFile(atPath: executable),
               arguments.allSatisfy({ !$0.contains("\0") }) else {
@@ -47,6 +71,42 @@ public struct HookDestination: Codable, Equatable, Sendable {
                 throw HookError("Codex destination requires a thread UUID and no generic arguments.")
             }
         }
+        if let claudeSession {
+            guard codexThread == nil, arguments.isEmpty, !claudeSession.isEmpty, claudeSession.count <= 512,
+                  !claudeSession.hasPrefix("-"),
+                  claudeSession.unicodeScalars.allSatisfy({ !CharacterSet.whitespacesAndNewlines.contains($0) &&
+                      !CharacterSet.controlCharacters.contains($0) }) else {
+                throw HookError("Claude destination requires a session ID or claude.ai URL and no generic arguments.")
+            }
+        }
+        if let opencodeSession {
+            guard codexThread == nil, claudeSession == nil, arguments.isEmpty, opencodeSession.hasPrefix("ses"),
+                  opencodeSession.count <= 512,
+                  opencodeSession.unicodeScalars.allSatisfy({ !CharacterSet.whitespacesAndNewlines.contains($0) &&
+                      !CharacterSet.controlCharacters.contains($0) }) else {
+                throw HookError("OpenCode destination requires a session ID starting with ses and no generic arguments.")
+            }
+        }
+    }
+}
+
+/// Per-subscription JSON Lines file: one compact HookEvent per line, append-only.
+public enum HookInbox {
+    public static func url(subscriptionID: String, directory: URL = HookJSON.directory) -> URL {
+        directory.appendingPathComponent("inbox").appendingPathComponent("\(subscriptionID).jsonl")
+    }
+
+    static func append(_ event: HookEvent, directory: URL) throws {
+        let url = url(subscriptionID: event.subscriptionID, directory: directory)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                               attributes: [.posixPermissions: 0o700])
+        let fd = open(url.path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
+        guard fd >= 0 else { throw HookError("Cannot open inbox file: \(url.path)") }
+        defer { close(fd) }
+        // One write per line keeps each event whole for concurrent readers.
+        let line = try HookJSON.encode(event) + Data("\n".utf8)
+        let written = line.withUnsafeBytes { write(fd, $0.baseAddress, line.count) }
+        guard written == line.count else { throw HookError("Short write to inbox file: \(url.path)") }
     }
 }
 
@@ -303,7 +363,7 @@ public final class AgentHookService {
                   let subscription = next.subscriptions.first(where: { $0.id == next.deliveries[index].event.subscriptionID }) else { continue }
             next.deliveries[index].result = result
             if result.succeeded {
-                next.deliveries[index].status = subscription.destination.codexThread == nil ? "delivered" : "queued"
+                next.deliveries[index].status = subscription.destination.isAgentQueue ? "queued" : "delivered"
             } else if subscription.cancelled {
                 next.deliveries[index].status = "cancelled"
             } else if next.deliveries[index].attempts >= 4 {
