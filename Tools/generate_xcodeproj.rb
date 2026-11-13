@@ -25,6 +25,7 @@ APP_SOURCES = [
   'Shared/Services/JobFormatting.swift',
   'Shared/Services/PollingCoordinator.swift',
   'Shared/Services/AgentHookService.swift',
+  'Shared/Services/ClaudeSessionSocket.swift',
   'Shared/Services/HookProcessExecutor.swift',
   'Shared/Services/HookSocket.swift',
   'Shared/Services/JobStore.swift',

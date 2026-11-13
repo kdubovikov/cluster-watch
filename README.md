@@ -220,7 +220,9 @@ cluster-watch subscribe \
   --codex-thread <thread-uuid>
 ```
 
-Without a destination option, events are appended to an inbox file, one compact JSON event per line, at `hooks/inbox/<subscription-id>.jsonl`. The subscribe response then includes a `follow` command:
+When `cluster-watch subscribe` runs inside a Claude Code session (`CLAUDE_CODE_MESSAGING_SOCKET` is set), the default destination is that session's own inbox socket. The app posts each event straight into the session as a new message: no watch command to set up, no process to launch, no model in the delivery path. A message to a busy session is read between its tool calls; an idle session starts a turn. Pass `--claude-socket /path/to/session.sock` to target a different live local session, or `--inbox` to use the inbox file described below. The socket exists only while the session runs, so if the session has exited the delivery fails, is retried, and ends as `failed`. A successful post is recorded as `queued`. The socket speaks an undocumented newline-delimited JSON protocol that may change between Claude Code versions (tested on 2.1.311). No token is stored.
+
+Outside Claude Code, or with `--inbox`, events are appended to an inbox file, one compact JSON event per line, at `hooks/inbox/<subscription-id>.jsonl`. The subscribe response then includes a `follow` command:
 
 ```sh
 cluster-watch subscribe --cluster cscc --job 12345 --states terminal

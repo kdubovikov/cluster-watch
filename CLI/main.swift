@@ -13,8 +13,11 @@ Usage:
     --states terminal --opencode-session SESSION_ID [--opencode-executable /path/to/opencode]
   cluster-watch subscribe --cluster ID_OR_ALIAS --job ID --states terminal
     --exec /absolute/executable [-- arguments...]
-  cluster-watch subscribe --cluster ID_OR_ALIAS --job ID --states terminal
-    (no destination: events go to an inbox read by `events follow`)
+  cluster-watch subscribe --cluster ID_OR_ALIAS --job ID [--job ID ...]
+    --states terminal [--claude-socket /path/to/session.sock]
+    (inside a Claude Code session the default: events are posted straight into that session)
+  cluster-watch subscribe --cluster ID_OR_ALIAS --job ID --states terminal [--inbox]
+    (default outside Claude Code: events go to an inbox read by `events follow`)
   cluster-watch events follow --subscription SUBSCRIPTION_ID
   cluster-watch subscriptions list
   cluster-watch subscriptions show SUBSCRIPTION_ID
@@ -58,13 +61,20 @@ func parse(_ args: [String]) throws -> HookRequest {
     }
     guard command == "subscribe" else { throw HookError(usage) }
     var values: [String: String] = [:], jobs: [String] = [], trailing: [String] = []
+    var inboxFlag = false
     var index = 1
     while index < args.count {
         let key = args[index]
         if key == "--" { trailing = Array(args.dropFirst(index + 1)); break }
+        if key == "--inbox" {
+            guard !inboxFlag else { throw HookError("Repeated option: --inbox") }
+            inboxFlag = true
+            index += 1
+            continue
+        }
         guard ["--cluster", "--job", "--states", "--codex-thread", "--codex-executable",
                "--claude-session", "--claude-executable", "--opencode-session",
-               "--opencode-executable", "--exec"].contains(key),
+               "--opencode-executable", "--claude-socket", "--exec"].contains(key),
               index + 1 < args.count else { throw HookError("Unknown option or missing value: \(key)") }
         if key == "--job" { jobs.append(args[index + 1]) }
         else {
@@ -80,8 +90,10 @@ func parse(_ args: [String]) throws -> HookRequest {
     let claude = values["--claude-session"] != nil || values["--claude-executable"] != nil
     let opencode = values["--opencode-session"] != nil || values["--opencode-executable"] != nil
     let exec = values["--exec"] != nil || !trailing.isEmpty
-    guard [codex, claude, opencode, exec].filter({ $0 }).count <= 1 else {
-        throw HookError("Choose at most one destination: --codex-thread, --claude-session, --opencode-session or --exec.")
+    let socket = values["--claude-socket"] != nil
+    let chosen = "Choose at most one destination: --codex-thread, --claude-session, --claude-socket, --opencode-session, --inbox or --exec."
+    guard [codex, claude, opencode, exec, socket, inboxFlag].filter({ $0 }).count <= 1 else {
+        throw HookError(chosen)
     }
     let destination: HookDestination
     if codex, let thread = values["--codex-thread"] {
@@ -95,9 +107,16 @@ func parse(_ args: [String]) throws -> HookRequest {
         destination = HookDestination(executable: executable, opencodeSession: session)
     } else if exec, let executable = values["--exec"] {
         destination = HookDestination(executable: executable, arguments: trailing)
+    } else if let path = values["--claude-socket"] {
+        destination = HookDestination(executable: "", claudeSocket: path)
+    } else if !codex, !claude, !opencode, !exec, !inboxFlag,
+              let path = ProcessInfo.processInfo.environment["CLAUDE_CODE_MESSAGING_SOCKET"], !path.isEmpty {
+        // Run from a Claude Code session: its own inbox is the default, so the
+        // agent needs no watch command that it could set up wrongly.
+        destination = HookDestination(executable: "", claudeSocket: path)
     } else if !codex, !claude, !opencode, !exec {
         destination = .inboxOnly
-    } else { throw HookError("Choose at most one destination: --codex-thread, --claude-session, --opencode-session or --exec.") }
+    } else { throw HookError(chosen) }
     return HookRequest(command: command, cluster: cluster, jobIDs: jobs,
                        states: stateText.components(separatedBy: ","), destination: destination)
 }

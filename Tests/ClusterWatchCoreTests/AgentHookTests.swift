@@ -294,6 +294,49 @@ final class AgentHookTests: XCTestCase {
             destination: HookDestination(executable: "/usr/bin/true", inbox: true)))
     }
 
+    func testClaudeSocketDestinationPostsEventIntoSessionAndReportsDeadSession() async throws {
+        let path = "/private/tmp/cws-\(UUID().uuidString.prefix(8)).sock"
+        let session = try FakeClaudeSession(path: path)
+        defer { session.stop() }
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let service = try AgentHookService(storage: try HookFileStore(directory: directory))
+        let live = try service.subscribe(cluster: cluster, jobIDs: ["123"], states: [.failed],
+                                         destination: HookDestination(executable: "", claudeSocket: path))
+        try service.observe(cluster: cluster, snapshots: ["123": snapshot(.failed)], subscriptionIDs: [live.id], now: time)
+        await service.deliverDue(now: time)
+        XCTAssertEqual(service.state.deliveries.map(\.status), ["queued"])
+        let line = try XCTUnwrap(session.firstLine(timeout: 5))
+        let message = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        XCTAssertEqual(message["type"] as? String, "user")
+        let body = try XCTUnwrap(message["message"] as? [String: String])
+        XCTAssertEqual(body["role"], "user")
+        XCTAssertTrue(try XCTUnwrap(body["content"]).contains("\"state\":\"failed\""))
+
+        session.stop()
+        let dead = try service.subscribe(cluster: cluster, jobIDs: ["456"], states: [.failed],
+                                         destination: HookDestination(executable: "", claudeSocket: path))
+        try service.observe(cluster: cluster, snapshots: ["456": snapshot(.failed, id: "456")],
+                            subscriptionIDs: [dead.id], now: time)
+        await service.deliverDue(now: time)
+        let failed = try XCTUnwrap(service.state.deliveries.last)
+        XCTAssertEqual(failed.status, "pending", "A vanished session is retried, then marked failed")
+        XCTAssertTrue(try XCTUnwrap(failed.result?.error).contains("no longer running"))
+    }
+
+    func testClaudeSocketDestinationValidation() throws {
+        let service = try AgentHookService(storage: TestHookStorage())
+        for bad in [HookDestination(executable: "", claudeSocket: "relative.sock"),
+                    HookDestination(executable: "", claudeSocket: "/tmp/" + String(repeating: "a", count: 120)),
+                    HookDestination(executable: "/usr/bin/true", claudeSocket: "/tmp/a.sock"),
+                    HookDestination(executable: "", claudeSession: "x", claudeSocket: "/tmp/a.sock"),
+                    HookDestination(executable: "", claudeSocket: "/tmp/a.sock", inbox: true)] {
+            XCTAssertThrowsError(try service.subscribe(cluster: cluster, jobIDs: ["1"], states: [.failed], destination: bad))
+        }
+        XCTAssertNoThrow(try service.subscribe(cluster: cluster, jobIDs: ["1"], states: [.failed],
+                                               destination: HookDestination(executable: "", claudeSocket: "/tmp/a.sock")))
+    }
+
     func testSocketRoundTripAndSingleServerLock() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -377,5 +420,59 @@ private actor PausedHookExecutor: HookExecuting {
     func finish() {
         continuation?.resume(returning: HookExecutionResult(exitCode: 1))
         continuation = nil
+    }
+}
+
+/// Listens on a Unix socket like a Claude Code session inbox and records received lines.
+private final class FakeClaudeSession: @unchecked Sendable {
+    private let path: String
+    private let listener: Int32
+    private let lock = NSCondition()
+    private var lines: [String] = []
+
+    init(path: String) throws {
+        self.path = path
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        listener = fd
+        var addr = try HookSocket.address(path)
+        unlink(path)
+        let bound = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        guard bound == 0, listen(fd, 4) == 0 else { throw HookError("Cannot bind fake session socket.") }
+        Thread.detachNewThread { [weak self] in
+            while true {
+                let client = accept(fd, nil, nil)
+                guard client >= 0 else { return }
+                var data = Data()
+                var buffer = [UInt8](repeating: 0, count: 4096)
+                while data.last != UInt8(ascii: "\n") {
+                    let count = read(client, &buffer, buffer.count)
+                    if count <= 0 { break }
+                    data.append(contentsOf: buffer.prefix(count))
+                }
+                self?.lock.lock()
+                self?.lines.append(String(decoding: data, as: UTF8.self).trimmingCharacters(in: .newlines))
+                self?.lock.broadcast()
+                self?.lock.unlock()
+                // Like a real session, stay silent and keep the connection open until the sender hangs up.
+                while read(client, &buffer, buffer.count) > 0 {}
+                close(client)
+            }
+        }
+    }
+
+    func firstLine(timeout: TimeInterval) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        let deadline = Date().addingTimeInterval(timeout)
+        while lines.isEmpty, lock.wait(until: deadline) {}
+        return lines.first
+    }
+
+    func stop() {
+        shutdown(listener, SHUT_RDWR)
+        close(listener)
+        unlink(path)
     }
 }

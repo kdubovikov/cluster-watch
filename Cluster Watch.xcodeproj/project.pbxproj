@@ -10,6 +10,7 @@
 		AA0100000000000000000001 /* AgentHookService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0200000000000000000001 /* AgentHookService.swift */; };
 		AA0100000000000000000002 /* HookProcessExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0200000000000000000002 /* HookProcessExecutor.swift */; };
 		AA0100000000000000000003 /* HookSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0200000000000000000003 /* HookSocket.swift */; };
+		AA0100000000000000000090 /* ClaudeSessionSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0200000000000000000090 /* ClaudeSessionSocket.swift */; };
 		AA0100000000000000000004 /* AgentHookTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0200000000000000000004 /* AgentHookTests.swift */; };
 		02014447C2EDBFE03D9B0834 /* SlurmParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE636D56F05870BE35089B2B /* SlurmParsingTests.swift */; };
 		04479C8D42618C2F8D2C79DA /* BrowseJobsSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F64F89C05E196D6FFC5D0B84 /* BrowseJobsSectionView.swift */; };
@@ -52,6 +53,7 @@
 		AA0200000000000000000001 /* AgentHookService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AgentHookService.swift; sourceTree = "<group>"; };
 		AA0200000000000000000002 /* HookProcessExecutor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HookProcessExecutor.swift; sourceTree = "<group>"; };
 		AA0200000000000000000003 /* HookSocket.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HookSocket.swift; sourceTree = "<group>"; };
+		AA0200000000000000000090 /* ClaudeSessionSocket.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ClaudeSessionSocket.swift; sourceTree = "<group>"; };
 		AA0200000000000000000004 /* AgentHookTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AgentHookTests.swift; sourceTree = "<group>"; };
 		0292CB392524AED265112296 /* SlurmClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SlurmClient.swift; sourceTree = "<group>"; };
 		067C0A4ADDB375B84045E969 /* JobStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = JobStore.swift; sourceTree = "<group>"; };
@@ -189,6 +191,7 @@
 				AA0200000000000000000001 /* AgentHookService.swift */,
 				AA0200000000000000000002 /* HookProcessExecutor.swift */,
 				AA0200000000000000000003 /* HookSocket.swift */,
+				AA0200000000000000000090 /* ClaudeSessionSocket.swift */,
 			);
 			name = Services;
 			path = Services;
@@ -347,6 +350,7 @@
 				AA0100000000000000000001 /* AgentHookService.swift in Sources */,
 				AA0100000000000000000002 /* HookProcessExecutor.swift in Sources */,
 				AA0100000000000000000003 /* HookSocket.swift in Sources */,
+				AA0100000000000000000090 /* ClaudeSessionSocket.swift in Sources */,
 				879918C2585E7BB5F3B5322A /* GroupedJobsViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -45,6 +45,18 @@ public struct HookProcessExecutor: HookExecuting {
                 return HookExecutionResult(error: error.localizedDescription)
             }
         }
+        if let socketPath = destination.claudeSocket {
+            let summary = String(decoding: (try? HookJSON.encode(event)) ?? Data(), as: UTF8.self)
+            let message = "[Cluster Watch job status]\nEvent data: \(summary)\nEvent file: \(eventFile.path)"
+            return await Task.detached {
+                do {
+                    try ClaudeSessionSocket.post(message, to: socketPath)
+                    return HookExecutionResult(exitCode: 0)
+                } catch {
+                    return HookExecutionResult(error: error.localizedDescription)
+                }
+            }.value
+        }
         return await Task.detached {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: destination.executable)

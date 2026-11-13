@@ -57,6 +57,7 @@ swiftc \
   "$ROOT_DIR/Shared/Services/AgentHookService.swift" \
   "$ROOT_DIR/Shared/Services/HookProcessExecutor.swift" \
   "$ROOT_DIR/Shared/Services/HookSocket.swift" \
+  "$ROOT_DIR/Shared/Services/ClaudeSessionSocket.swift" \
   "$ROOT_DIR/Shared/Services/JobStore.swift" \
   "$ROOT_DIR/Shared/ViewModels/GroupedJobsViewModel.swift"
 

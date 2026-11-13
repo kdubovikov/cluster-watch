@@ -34,30 +34,44 @@ public struct HookDestination: Codable, Equatable, Sendable {
     /// OpenCode session ID (`ses_...`); the app admits one queued input through
     /// `opencode api post /api/session/<id>/prompt`.
     public var opencodeSession: String?
+    /// Inbox socket of a live local Claude Code session (`CLAUDE_CODE_MESSAGING_SOCKET`).
+    /// Events are posted straight into that session without starting a process.
+    public var claudeSocket: String?
     /// Record-only: events are appended to the subscription's inbox file for
     /// `cluster-watch events follow`, without running a process.
     public var inbox: Bool?
 
     public init(executable: String, arguments: [String] = [], codexThread: String? = nil,
-                claudeSession: String? = nil, opencodeSession: String? = nil, inbox: Bool? = nil) {
+                claudeSession: String? = nil, opencodeSession: String? = nil, claudeSocket: String? = nil,
+                inbox: Bool? = nil) {
         self.executable = executable
         self.arguments = arguments
         self.codexThread = codexThread
         self.claudeSession = claudeSession
         self.opencodeSession = opencodeSession
+        self.claudeSocket = claudeSocket
         self.inbox = inbox
     }
 
     public static let inboxOnly = HookDestination(executable: "", inbox: true)
 
     /// Agent destinations only confirm that the CLI accepted the message.
-    var isAgentQueue: Bool { codexThread != nil || claudeSession != nil || opencodeSession != nil }
+    var isAgentQueue: Bool {
+        codexThread != nil || claudeSession != nil || opencodeSession != nil || claudeSocket != nil
+    }
 
     func validate() throws {
         if inbox == true {
             guard executable.isEmpty, arguments.isEmpty, codexThread == nil, claudeSession == nil,
-                  opencodeSession == nil else {
+                  opencodeSession == nil, claudeSocket == nil else {
                 throw HookError("Inbox destination cannot be combined with another destination.")
+            }
+            return
+        }
+        if let claudeSocket {
+            guard executable.isEmpty, arguments.isEmpty, codexThread == nil, claudeSession == nil,
+                  opencodeSession == nil, ClaudeSessionSocket.isValid(path: claudeSocket) else {
+                throw HookError("Claude socket destination requires an absolute Unix socket path and no other destination.")
             }
             return
         }
